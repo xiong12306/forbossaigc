@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "boss_aigc"
+version = "0.1.0"
+description = "老板 AI 助手：让老板一句话吩咐干活，七层架构骨架与统一数据契约"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["boss_aigc*"]

@@ -1,0 +1,5 @@
+# 开发依赖（生产部署不需要）
+-r requirements.txt
+
+pytest==9.1.1
+pytest-asyncio==1.4.0

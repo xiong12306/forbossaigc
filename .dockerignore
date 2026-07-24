@@ -1,0 +1,41 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.eggs/
+
+# 前端构建产物（容器内重新构建）
+web/dist/
+boss_aigc/static/
+
+# 本地数据与日志
+data/
+logs/
+*.db
+*.sqlite3
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# 文档（可选，保留 README）
+docs/
+
+# 测试缓存
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Trae 工具
+.trae/

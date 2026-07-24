@@ -1,0 +1,81 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Node dependencies
+node_modules/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Type checkers
+.mypy_cache/
+.pyre/
+.pytype/
+
+# Logs
+*.log
+logs/
+
+# Local config / secrets
+.env
+.env.local
+*.secret
+secrets/
+
+# 前端构建产物（由 npm run build 生成，容器内重新构建）
+boss_aigc/static/
+web/dist/
+
+# 本地数据与日志
+data/
+logs/
+*.db
+*.sqlite3
