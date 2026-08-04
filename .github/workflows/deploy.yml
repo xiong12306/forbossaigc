@@ -1,26 +1,54 @@
 name: Deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Build & Publish Docker Image"]
+    types: [completed]
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: '镜像标签（默认 latest）'
+        required: false
+        default: 'latest'
 
 concurrency:
   group: deploy
   cancel-in-progress: false
 
 jobs:
-  ci-check:
-    name: CI 检查通过
-    uses: ./.github/workflows/ci.yml
-
   deploy:
     name: 部署到生产服务器
     runs-on: ubuntu-latest
-    needs: ci-check
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    # 只在 docker-publish 成功时部署（workflow_run 触发时）
+    if: |
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
 
     steps:
+      - name: 检出代码（获取 docker-compose.yml 和 nginx 配置）
+        uses: actions/checkout@v4
+
+      - name: 准备镜像名
+        id: image
+        run: |
+          # GHCR 镜像名必须小写
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          TAG="${{ github.event.inputs.image_tag || 'latest' }}"
+          IMAGE="ghcr.io/${REPO_LOWER}:${TAG}"
+          echo "name=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "📦 部署镜像: ${IMAGE}"
+
+      - name: 同步部署文件到服务器
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          source: "docker-compose.yml,nginx.conf,nginx/init.sh,.env.example"
+          target: "/opt/bossaigc"
+          overwrite: true
+
       - name: 部署到服务器
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -31,38 +59,78 @@ jobs:
             set -e
             cd /opt/bossaigc
 
-            # 如果还没有项目代码（首次部署），提示手动部署
-            if [ ! -f "docker-compose.yml" ]; then
-              echo "❌ 首次部署请参考 README.md 手动完成初始部署"
+            # 确保配置文件就位
+            chmod +x nginx/init.sh
+
+            # 确保有 .env
+            if [ ! -f ".env" ]; then
+              echo "❌ .env 不存在，请参考 .env.example 创建"
               exit 1
             fi
 
-            # 更新脚本：直接从 GitHub 拉取最新代码（不需要本地 push）
-            # 通过 GitHub API 下载最新代码 zip 解压，避免在服务器上配置 git 凭据
-            echo "正在下载最新代码..."
-            curl -sL "https://github.com/${{ github.repository }}/archive/refs/heads/${{ github.ref_name }}.tar.gz" -o /tmp/bossaigc-latest.tar.gz
-            tar -xzf /tmp/bossaigc-latest.tar.gz -C /tmp/
-            # 解压出来的目录名是 bossaigc-main 或 bossaigc-master
-            EXTRACTED_DIR=$(ls -d /tmp/forBossAIGC-* 2>/dev/null || ls -d /tmp/bossaigc-* 2>/dev/null || echo "")
-            if [ -z "$EXTRACTED_DIR" ]; then
-              EXTRACTED_DIR="/tmp/forBossAIGC-${{ github.ref_name }}"
+            # 写入 IMAGE_NAME 和 DOMAIN 到 .env（覆盖旧值）
+            sed -i "s|^IMAGE_NAME=.*|IMAGE_NAME=${{ steps.image.outputs.name }}|" .env
+            if ! grep -q "^IMAGE_NAME=" .env; then
+              echo "IMAGE_NAME=${{ steps.image.outputs.name }}" >> .env
             fi
-            if [ -d "$EXTRACTED_DIR" ]; then
-              # 复制更新后的代码文件（保留 .env 和 data 目录）
-              rsync -av --exclude='.env' --exclude='data/' --exclude='logs/' --exclude='boss_aigc/static/' --exclude='.git/' "$EXTRACTED_DIR/" /opt/bossaigc/
-              rm -rf "$EXTRACTED_DIR" /tmp/bossaigc-latest.tar.gz
-              echo "代码已更新"
+            if ! grep -q "^DOMAIN=" .env; then
+              echo "DOMAIN=xjloveqrj.pw" >> .env
+            fi
+
+            # 记录当前镜像 ID（用于回滚）
+            OLD_IMAGE_ID=$(docker compose images app 2>/dev/null | grep app | awk '{print $3}' || echo "")
+            echo "📦 旧镜像: ${OLD_IMAGE_ID:-无}"
+
+            # 登录 GHCR（用 PAT 拉取私有镜像，如果镜像是公开的可跳过）
+            if [ -n "${{ secrets.GHCR_PAT }}" ]; then
+              echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ secrets.GHCR_USER }} --password-stdin
+            fi
+
+            # 拉取最新镜像
+            echo "⬇️  拉取镜像..."
+            docker compose pull app
+
+            # 记录新镜像 ID
+            NEW_IMAGE_ID=$(docker compose images app 2>/dev/null | grep app | awk '{print $3}' || echo "")
+            echo "📦 新镜像: ${NEW_IMAGE_ID}"
+
+            # 如果镜像没变化，跳过部署
+            if [ -n "$OLD_IMAGE_ID" ] && [ "$OLD_IMAGE_ID" = "$NEW_IMAGE_ID" ]; then
+              echo "✅ 镜像无变化，跳过部署"
+              exit 0
+            fi
+
+            # 重启服务
+            echo "🔄 重启服务..."
+            docker compose up -d --remove-orphans
+
+            # 健康检查
+            echo "🏥 健康检查..."
+            sleep 5
+            for i in $(seq 1 15); do
+              if docker compose exec -T app curl -sf http://localhost:8000/api/health 2>/dev/null; then
+                echo ""
+                echo "✅ 部署成功！镜像: ${{ steps.image.outputs.name }}"
+                exit 0
+              fi
+              echo "  等待中... ($i/15)"
+              sleep 3
+            done
+
+            # 健康检查失败，自动回滚
+            echo "❌ 健康检查失败，尝试回滚..."
+            if [ -n "$OLD_IMAGE_ID" ] && [ "$OLD_IMAGE_ID" != "$NEW_IMAGE_ID" ]; then
+              echo "🔙 回滚到旧镜像: $OLD_IMAGE_ID"
+              # 用旧镜像 ID 重启
+              docker tag "$OLD_IMAGE_ID" "${{ steps.image.outputs.name }}"
+              docker compose up -d --no-deps app
+              sleep 5
+              if docker compose exec -T app curl -sf http://localhost:8000/api/health 2>/dev/null; then
+                echo "✅ 回滚成功"
+              else
+                echo "❌ 回滚失败，请手动检查: docker compose logs --tail=50"
+              fi
             else
-              echo "⚠️  无法自动下载代码，尝试用 update.sh 更新"
+              echo "⚠️  无旧镜像可回滚，请检查日志: docker compose logs --tail=50"
             fi
-
-            # 给 update.sh 执行权限
-            chmod +x /opt/bossaigc/update.sh
-
-            # 执行更新
-            bash /opt/bossaigc/update.sh
-
-            echo ""
-            echo "=========================================="
-            echo "  ✅ 部署完成！"
-            echo "=========================================="
+            exit 1

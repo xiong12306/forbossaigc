@@ -152,7 +152,7 @@ export default function Service() {
 
   return (
     <div className="min-h-screen bg-charcoal-900 text-ivory-500">
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-7xl mx-auto px-4 lg:px-6 py-4 lg:py-8">
         {/* 顶部标题 */}
         <motion.header
           initial={{ opacity: 0, y: -10 }}
@@ -185,7 +185,7 @@ export default function Service() {
               >
                 <div
                   className="absolute -top-6 -right-6 w-24 h-24 rounded-full bg-gradient-to-br opacity-10 blur-2xl pointer-events-none"
-                  style={{ background: "radial-gradient(circle, rgba(201,169,97,0.6), transparent 70%)" }}
+                  style={{ background: "radial-gradient(circle, rgba(37, 99, 235,0.6), transparent 70%)" }}
                 />
                 <div className="flex items-center justify-between">
                   <div

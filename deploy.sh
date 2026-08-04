@@ -1,71 +1,85 @@
 #!/bin/bash
-# BossAIGC 一键部署脚本（在服务器上执行）
+# BossAIGC 首次部署脚本（在服务器上执行）
+# 基于 GHCR 镜像拉取，无需本地构建
+#
 # 用法：
+#   scp deploy.sh docker-compose.yml nginx.conf nginx/ root@服务器IP:/opt/bossaigc/
+#   ssh root@服务器IP 'cd /opt/bossaigc && bash deploy.sh'
+#
+# 或一键命令：
 #   curl -fsSL <你的脚本URL> | bash
-# 或：
-#   scp deploy.sh root@服务器IP:/opt/ && ssh root@服务器IP 'cd /opt && bash deploy.sh'
 
 set -e
 
 # ===== 配置 =====
 DEPLOY_DIR="/opt/bossaigc"
-SERVICE_NAME="bossaigc"
+DOMAIN="xjloveqrj.pw"
+# GHCR 镜像地址（替换为你的实际镜像名，全小写）
+IMAGE_NAME="${IMAGE_NAME:-ghcr.io/your-github-username/forbossaigc:latest}"
 
 echo "=========================================="
-echo "  BossAIGC 一键部署"
+echo "  BossAIGC 首次部署（镜像拉取模式）"
 echo "=========================================="
 
 # 1. 检查 Docker
 if ! command -v docker &> /dev/null; then
-    echo "[1/6] 安装 Docker..."
+    echo "[1/7] 安装 Docker..."
     curl -fsSL https://get.docker.com | sh
     systemctl enable --now docker
 else
-    echo "[1/6] Docker 已安装: $(docker --version)"
+    echo "[1/7] Docker 已安装: $(docker --version)"
 fi
 
 # 2. 检查 docker compose
 if ! docker compose version &> /dev/null; then
-    echo "[2/6] 安装 docker-compose-plugin..."
+    echo "[2/7] 安装 docker-compose-plugin..."
     apt-get update -qq && apt-get install -y -qq docker-compose-plugin
 else
-    echo "[2/6] Docker Compose 已就绪"
+    echo "[2/7] Docker Compose 已就绪"
 fi
 
-# 3. 创建部署目录
-echo "[3/6] 准备部署目录 $DEPLOY_DIR ..."
-mkdir -p "$DEPLOY_DIR"
+# 3. 准备部署目录
+echo "[3/7] 准备部署目录 $DEPLOY_DIR ..."
+mkdir -p "$DEPLOY_DIR/nginx"
 cd "$DEPLOY_DIR"
 
-# 4. 检查是否已有项目代码
+# 4. 检查配置文件
 if [ ! -f "docker-compose.yml" ]; then
-    echo "[4/6] 项目代码不存在，请通过以下方式之一上传代码："
-    echo ""
-    echo "  方式A - 从本地 scp 上传（在你的 Mac 上执行）："
-    echo "    cd /Users/admin/Documents/Trae/forBossAIGC"
-    echo "    scp -r * deploy.sh root@服务器IP:$DEPLOY_DIR/"
-    echo ""
-    echo "  方式B - 从 Git 仓库克隆（若已推送）："
-    echo "    git clone <你的仓库地址> $DEPLOY_DIR"
-    echo ""
-    echo "  上传完成后，再次运行此脚本：bash $DEPLOY_DIR/deploy.sh"
-    exit 0
-else
-    echo "[4/6] 项目代码已就位"
+    echo "[4/7] ❌ docker-compose.yml 不存在"
+    echo "  请先上传部署文件："
+    echo "    scp docker-compose.yml nginx.conf nginx/ root@服务器IP:$DEPLOY_DIR/"
+    exit 1
 fi
+echo "[4/7] 配置文件已就位"
 
 # 5. 检查 .env 配置
 if [ ! -f ".env" ]; then
-    echo "[5/6] 创建 .env 配置文件..."
-    cp .env.example .env
+    echo "[5/7] 创建 .env 配置文件..."
+    if [ -f ".env.example" ]; then
+        cp .env.example .env
+    else
+        # 创建最小化 .env
+        cat > .env << EOF
+IMAGE_NAME=$IMAGE_NAME
+DOMAIN=$DOMAIN
+SUPABASE_URL=https://xxxxx.supabase.co
+SUPABASE_ANON_KEY=
+JWT_SECRET=$(openssl rand -hex 32)
+JWT_EXPIRE_HOURS=24
+BOSS_USERNAME=boss
+BOSS_PASSWORD_HASH=
+ALLOWED_ORIGINS=https://$DOMAIN,https://www.$DOMAIN
+PLATFORM_PROVIDER=modelscope
+MODELSCOPE_API_KEY=
+MODELSCOPE_MODEL=Qwen/Qwen-Image
+MODELSCOPE_API_BASE=https://api-inference.modelscope.cn/v1
+REQUEST_TIMEOUT_SEC=180
+POLL_INTERVAL_SEC=2.0
+EOF
+    fi
 
-    # 自动生成 JWT_SECRET
-    JWT_SECRET=$(openssl rand -hex 32)
-    sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" .env
-
-    # 生成临时密码
+    # 生成密码
     TEMP_PASSWORD=$(openssl rand -base64 12)
-    # 注意：这里需要 Python 算哈希，若服务器无 Python 则用简单方式
     if command -v python3 &> /dev/null; then
         PASSWORD_HASH=$(python3 -c "
 import hashlib, secrets
@@ -77,24 +91,44 @@ print(f'{salt}\${h}')
     fi
 
     echo ""
-    echo "  ⚠️  .env 已生成，请编辑填入 Supabase 配置："
+    echo "  ⚠️  .env 已生成，请编辑填入必要配置："
     echo "      nano $DEPLOY_DIR/.env"
+    echo ""
+    echo "  必填项："
+    echo "    - MODELSCOPE_API_KEY（魔搭 API Key）"
+    echo "    - SUPABASE_URL / SUPABASE_ANON_KEY（如使用 Supabase）"
     echo ""
     echo "  ===== 自动生成的登录信息 ====="
     echo "  用户名: boss"
     echo "  密码: $TEMP_PASSWORD"
     echo "  =============================="
     echo ""
-    echo "  填好 Supabase 配置后，再次运行此脚本启动："
+    echo "  填好配置后，再次运行此脚本启动："
     echo "      bash $DEPLOY_DIR/deploy.sh"
     exit 0
 else
-    echo "[5/6] .env 配置已存在"
+    echo "[5/7] .env 配置已存在"
+    # 确保 IMAGE_NAME 和 DOMAIN 在 .env 中
+    if ! grep -q "^IMAGE_NAME=" .env; then
+        echo "IMAGE_NAME=$IMAGE_NAME" >> .env
+    fi
+    if ! grep -q "^DOMAIN=" .env; then
+        echo "DOMAIN=$DOMAIN" >> .env
+    fi
 fi
 
-# 6. 启动服务
-echo "[6/6] 构建并启动服务..."
-docker compose up -d --build
+# 6. 登录 GHCR（如果有 PAT）
+if [ -n "$GHCR_PAT" ] && [ -n "$GHCR_USER" ]; then
+    echo "[6/7] 登录 GHCR..."
+    echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+else
+    echo "[6/7] 跳过 GHCR 登录（镜像需公开，或设置 GHCR_PAT/GHCR_USER 环境变量）"
+fi
+
+# 7. 拉取镜像并启动
+echo "[7/7] 拉取镜像并启动服务..."
+docker compose pull
+docker compose up -d --remove-orphans
 
 # 等待服务启动
 echo ""
@@ -102,29 +136,29 @@ echo "等待服务启动..."
 sleep 8
 
 # 健康检查
-SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
-HEALTH_URL="http://localhost:8000/api/health"
-
-for i in {1..10}; do
-    if curl -sf "$HEALTH_URL" &> /dev/null; then
+for i in $(seq 1 15); do
+    if docker compose exec -T app curl -sf http://localhost:8000/api/health 2>/dev/null; then
         echo ""
         echo "=========================================="
         echo "  ✅ 部署成功！"
         echo "=========================================="
         echo ""
-        echo "  访问地址:  http://$SERVER_IP"
-        echo "  健康检查:  http://$SERVER_IP/api/health"
-        echo "  监控指标:  http://$SERVER_IP/metrics"
+        echo "  访问地址:  https://$DOMAIN"
+        echo "  健康检查:  https://$DOMAIN/api/health"
+        echo ""
+        echo "  ⚠️  首次部署使用自签证书，浏览器会警告不安全。"
+        echo "  请运行证书签发脚本获取真实 HTTPS 证书："
+        echo "      bash $DEPLOY_DIR/issue-ssl.sh"
         echo ""
         echo "  常用命令:"
         echo "    查看日志:   docker compose logs -f"
         echo "    重启服务:   docker compose restart"
         echo "    停止服务:   docker compose down"
-        echo "    更新部署:   git pull && docker compose up -d --build"
+        echo "    更新部署:   bash $DEPLOY_DIR/update.sh"
         echo "=========================================="
         exit 0
     fi
-    echo "  等待中... ($i/10)"
+    echo "  等待中... ($i/15)"
     sleep 3
 done
 

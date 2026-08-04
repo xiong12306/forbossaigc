@@ -14,6 +14,7 @@ interface Props {
   onCancel: () => void;
   onAccept: () => void;
   onRedo: () => void;
+  onNewTask: () => void;
 }
 
 /**
@@ -49,6 +50,7 @@ export default function SidePanel(props: Props) {
             onAccept={props.onAccept}
             onModify={props.onModify}
             onRedo={props.onRedo}
+            onNewTask={props.onNewTask}
           />
         )}
       </AnimatePresence>

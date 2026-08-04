@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { chat as apiChat, reset as apiReset } from "@/api";
+import { chat as apiChat, reset as apiReset, uploadImage as apiUpload } from "@/api";
 import type {
   ChatMessage,
   ChatStatus,
@@ -17,7 +17,8 @@ interface ChatState {
   timeline: TimelineNode[];
   loading: boolean;
   error: string | null;
-  sendMessage: (text: string) => Promise<void>;
+  sendMessage: (text: string, opts?: { hidePanel?: boolean; images?: string[] }) => Promise<void>;
+  uploadImage: (file: File) => Promise<string>;
   resetSession: () => Promise<void>;
 }
 
@@ -38,20 +39,24 @@ export const useChat = create<ChatState>((set, get) => ({
   loading: false,
   error: null,
 
-  sendMessage: async (text: string) => {
+  sendMessage: async (text: string, opts?: { hidePanel?: boolean; images?: string[] }) => {
     const trimmed = text.trim();
     if (!trimmed || get().loading) return;
 
     // 先把老板消息加入列表
-    const bossMsg: ChatMessage = { id: nextId(), role: "boss", text: trimmed };
+    const bossMsg: ChatMessage = { id: nextId(), role: "boss", text: trimmed, images: opts?.images };
+
+    // 确认/执行类指令：立刻隐藏摘要/产物面板，避免执行期间面板残留
+    const hideNow = opts?.hidePanel || /^(确认|开始|重做|生成)/.test(trimmed);
     set((s) => ({
       messages: [...s.messages, bossMsg],
       loading: true,
       error: null,
+      ...(hideNow ? { currentSummary: null, currentArtifacts: null } : {}),
     }));
 
     try {
-      const res = await apiChat(trimmed, get().sessionId ?? undefined);
+      const res = await apiChat(trimmed, get().sessionId ?? undefined, opts?.images);
       const assistantMsg: ChatMessage = {
         id: nextId(),
         role: "assistant",
@@ -83,6 +88,10 @@ export const useChat = create<ChatState>((set, get) => ({
         error: errMsg,
       }));
     }
+  },
+
+  uploadImage: async (file: File) => {
+    return apiUpload(file);
   },
 
   resetSession: async () => {

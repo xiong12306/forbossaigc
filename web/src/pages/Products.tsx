@@ -115,7 +115,7 @@ export default function Products() {
 
   return (
     <div className="min-h-screen bg-charcoal-900 text-ivory-500">
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-7xl mx-auto px-4 lg:px-6 py-4 lg:py-8">
         {/* 顶部标题 */}
         <motion.header
           initial={{ opacity: 0, y: -10 }}
@@ -158,16 +158,6 @@ export default function Products() {
           </div>
         </div>
 
-        {/* 表头 */}
-        <div className="grid grid-cols-12 gap-4 px-5 py-3 mb-2 rounded-xl bg-brown-900/70 border border-brown-700/50 text-xs text-ivory-400/60 tracking-wider uppercase">
-          <div className="col-span-1">商品图</div>
-          <div className="col-span-4">商品名称</div>
-          <div className="col-span-2">价格</div>
-          <div className="col-span-2">库存</div>
-          <div className="col-span-2">状态</div>
-          <div className="col-span-1 text-right">操作</div>
-        </div>
-
         {/* 加载状态 */}
         {loading && (
           <div className="flex flex-col items-center justify-center py-20">
@@ -176,8 +166,20 @@ export default function Products() {
           </div>
         )}
 
-        {/* 商品列表 */}
+        {/* 表头 + 商品列表（宽表格横向滚动） */}
         {!loading && (
+          <div className="overflow-x-auto -mx-4 px-4 lg:mx-0 lg:px-0">
+          <div className="min-w-[720px] lg:min-w-0">
+          {/* 表头 */}
+          <div className="grid grid-cols-12 gap-4 px-5 py-3 mb-2 rounded-xl bg-brown-900/70 border border-brown-700/50 text-xs text-ivory-400/60 tracking-wider uppercase">
+            <div className="col-span-1">商品图</div>
+            <div className="col-span-4">商品名称</div>
+            <div className="col-span-2">价格</div>
+            <div className="col-span-2">库存</div>
+            <div className="col-span-2">状态</div>
+            <div className="col-span-1 text-right">操作</div>
+          </div>
+
           <div className="space-y-2">
             {products.map((p, idx) => {
               const meta = STATUS_META[p.status] || STATUS_META.off_shelf;
@@ -286,6 +288,8 @@ export default function Products() {
                 没有找到匹配的商品
               </div>
             )}
+          </div>
+          </div>
           </div>
         )}
       </div>

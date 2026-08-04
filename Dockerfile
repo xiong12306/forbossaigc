@@ -31,9 +31,9 @@ COPY schema.sql ./
 # 从阶段1拷贝前端构建产物
 COPY --from=frontend-builder /app/boss_aigc/static ./boss_aigc/static
 
-# 数据目录（SQLite fallback 用）
-RUN mkdir -p /app/data
-VOLUME ["/app/data"]
+# 数据目录（SQLite fallback 用）与上传目录
+RUN mkdir -p /app/data /app/boss_aigc/uploads
+VOLUME ["/app/data", "/app/boss_aigc/uploads"]
 
 # 环境变量默认值（生产应通过 docker-compose / -e 覆盖）
 ENV PYTHONUNBUFFERED=1 \

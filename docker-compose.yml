@@ -1,9 +1,9 @@
 # BossAIGC 生产部署 docker-compose
+# 使用 GHCR 镜像（非本地构建），部署只需 docker compose pull && up -d
+
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${IMAGE_NAME:-ghcr.io/your-github-username/forbossaigc:latest}
     container_name: bossaigc-app
     restart: unless-stopped
     env_file:
@@ -13,10 +13,17 @@ services:
       - WEB_CONCURRENCY=1
     volumes:
       - app-data:/app/data
+      - app-uploads:/app/boss_aigc/uploads
     expose:
       - "8000"
     networks:
       - boss-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
 
   nginx:
     image: nginx:alpine
@@ -24,18 +31,25 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      # - "443:443"  # HTTPS 证书签发后再开启
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN:-xjloveqrj.pw}
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/init.sh:/docker-entrypoint.d/40-init-ssl.sh:ro
       - certbot-www:/var/www/certbot
       - certbot-certs:/etc/letsencrypt
+      - nginx-ssl:/etc/nginx/ssl
       - nginx-logs:/var/log/nginx
     depends_on:
-      - app
+      app:
+        condition: service_healthy
     networks:
       - boss-net
+    # 确保入口脚本可执行
+    entrypoint: ["/bin/sh", "-c", "chmod +x /docker-entrypoint.d/40-init-ssl.sh && /docker-entrypoint.sh"]
 
-  # HTTPS 证书签发后手动运行：
+  # Let's Encrypt 证书签发（手动运行）
   # docker compose run --rm certbot
   certbot:
     image: certbot/certbot:latest
@@ -46,14 +60,27 @@ services:
     entrypoint: >
       certbot certonly --webroot
       --webroot-path=/var/www/certbot
-      --email admin@xjloveqrj.pw
+      --email admin@${DOMAIN:-xjloveqrj.pw}
       --agree-tos --no-eff-email
-      -d xjloveqrj.pw -d www.xjloveqrj.pw
+      -d ${DOMAIN:-xjloveqrj.pw} -d www.${DOMAIN:-xjloveqrj.pw}
+
+  # 证书自动续期（每月1日和15日凌晨3点检查）
+  certbot-renew:
+    image: certbot/certbot:latest
+    profiles: ["renew"]
+    restart: unless-stopped
+    volumes:
+      - certbot-www:/var/www/certbot
+      - certbot-certs:/etc/letsencrypt
+    entrypoint: >
+      /bin/sh -c "echo '0 3 1,15 * * certbot renew --webroot-path=/var/www/certbot --quiet && docker exec bossaigc-nginx nginx -s reload' > /etc/crontabs/root && crond -f"
 
 volumes:
   app-data:
+  app-uploads:
   certbot-www:
   certbot-certs:
+  nginx-ssl:
   nginx-logs:
 
 networks:

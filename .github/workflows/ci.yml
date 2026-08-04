@@ -58,14 +58,3 @@ jobs:
       - name: 生产构建
         working-directory: web
         run: npm run build
-
-  docker-build:
-    name: Docker 镜像构建
-    runs-on: ubuntu-latest
-    needs: [backend-test, frontend-build]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: 构建镜像
-        run: docker build -t bossaigc:ci .

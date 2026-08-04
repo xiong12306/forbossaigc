@@ -14,6 +14,7 @@ export type ChatStatus =
 export interface ChatRequest {
   message: string;
   session_id?: string;
+  images?: string[]; // 老板上传的参考图 URL 列表
 }
 
 export interface Summary {
@@ -59,6 +60,7 @@ export interface ChatMessage {
   id: string;
   role: MessageRole;
   text: string;
+  images?: string[]; // 老板上传的参考图 URL 列表
   summary?: Summary | null;
   artifacts?: Artifact[] | null;
   followUp?: string;

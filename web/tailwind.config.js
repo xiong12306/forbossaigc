@@ -9,38 +9,36 @@ export default {
     },
     extend: {
       colors: {
-        // 主背景：深炭灰
+        // 注：色板名保留，含义已由"暗·轻奢"改为"亮·专业蓝"——
+        // charcoal=浅色页底/面，brown=白卡/浅边框，gold=科技蓝主强调，
+        // terracotta=天蓝次强调，ivory=深墨文字。类名沿用，故 970 处用法无需改。
         charcoal: {
-          DEFAULT: "#1A1715",
-          800: "#221E1B",
-          900: "#131110",
+          DEFAULT: "#F5F8FC",
+          800: "#E9EEF5",
+          900: "#F4F7FB",
         },
-        // 卡片底：深褐
         brown: {
-          DEFAULT: "#3D3530",
-          700: "#332C28",
-          800: "#2A2421",
-          900: "#1F1A17",
+          DEFAULT: "#E2E8F0",
+          700: "#E2E8F0",
+          800: "#F1F5F9",
+          900: "#FFFFFF",
         },
-        // 强调：琥珀金
         gold: {
-          300: "#E0C988",
-          400: "#D4B970",
-          500: "#C9A961",
-          600: "#B89650",
+          300: "#60A5FA",
+          400: "#3B82F6",
+          500: "#2563EB",
+          600: "#1D4ED8",
         },
-        // 次强调：赤陶橙
         terracotta: {
-          DEFAULT: "#D97757",
-          400: "#E08A6E",
-          500: "#D97757",
-          600: "#C26548",
+          DEFAULT: "#0EA5E9",
+          400: "#38BDF8",
+          500: "#0EA5E9",
+          600: "#0284C7",
         },
-        // 文字：暖象牙
         ivory: {
-          DEFAULT: "#F5EFE6",
-          400: "#E8DFD0",
-          500: "#F5EFE6",
+          DEFAULT: "#0F172A",
+          400: "#334155",
+          500: "#1E293B",
         },
       },
       fontFamily: {
@@ -48,11 +46,9 @@ export default {
         sans: ['"Noto Sans SC"', "system-ui", "sans-serif"],
       },
       boxShadow: {
-        // 琥珀金光晕
-        "gold-glow": "0 0 20px rgba(201, 169, 97, 0.35)",
-        // 卡片柔光阴影
+        "gold-glow": "0 0 20px rgba(37, 99, 235, 0.22)",
         "warm-glow":
-          "0 8px 32px rgba(0, 0, 0, 0.45), 0 0 1px rgba(201, 169, 97, 0.25)",
+          "0 8px 24px rgba(15, 23, 42, 0.08), 0 0 1px rgba(37, 99, 235, 0.15)",
       },
     },
   },

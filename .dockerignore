@@ -39,3 +39,24 @@ htmlcov/
 
 # Trae 工具
 .trae/
+.claude/
+
+# CI/CD 配置（不需要进镜像）
+.github/
+
+# 诊断/测试脚本（不需要进镜像）
+scripts/
+
+# 部署脚本（不需要进镜像）
+deploy.sh
+update.sh
+setup_docker.sh
+
+# 环境配置（敏感，不进镜像）
+.env
+.env.local
+.env.example
+*.secret
+
+# 本地 uploads（运行时生成）
+boss_aigc/uploads/

@@ -123,7 +123,7 @@ export default function Copywriting() {
   return (
     <div className="h-screen w-screen flex flex-col bg-charcoal-900 text-ivory-500 overflow-hidden">
       {/* 顶栏 */}
-      <header className="flex items-center justify-between px-6 py-3 bg-brown-900/70 backdrop-blur border-b border-gold-500/20">
+      <header className="flex items-center justify-between px-4 lg:px-6 py-3 bg-brown-900/70 backdrop-blur border-b border-gold-500/20">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center shadow-gold-glow">
             <Type className="w-4 h-4 text-charcoal-900" />
@@ -143,7 +143,7 @@ export default function Copywriting() {
       </header>
 
       {/* 主内容区 */}
-      <div className="flex-1 overflow-y-auto px-6 py-8">
+      <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-8">
         <div className="max-w-3xl mx-auto">
           <AnimatePresence mode="wait">
             {/* 表单 / 加载中 */}
@@ -297,7 +297,7 @@ export default function Copywriting() {
                     className="absolute inset-0 rounded-2xl opacity-30 pointer-events-none"
                     style={{
                       background:
-                        "radial-gradient(circle at 20% 0%, rgba(201,169,97,0.15), transparent 60%)",
+                        "radial-gradient(circle at 20% 0%, rgba(37, 99, 235,0.15), transparent 60%)",
                     }}
                   />
                   <div className="relative">

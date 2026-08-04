@@ -73,10 +73,14 @@ def build_orchestration_handler() -> LayerHandler:
     return handler
 
 
+# 哨兵值：明确表示不使用fallback适配器（真实平台配置时使用，失败直接报错）
+_NO_FALLBACK = object()
+
+
 def build_execution_handler(
     registry: AdapterRegistry,
     retry_max: int = 3,
-    fallback_adapter: Optional[PlatformAdapter] = None,
+    fallback_adapter: Optional[PlatformAdapter] = _NO_FALLBACK,
 ) -> LayerHandler:
     """构建执行层处理器。
 
@@ -90,15 +94,17 @@ def build_execution_handler(
     Args:
         registry: 适配器注册表。
         retry_max: 单步失败重试上限。
-        fallback_adapter: 备用适配器；None 时默认用 MockAdapter(fail_mode="none")
-            模拟「切换到备用平台」（本阶段 MOCK 的备用仍是 MOCK）。
+        fallback_adapter: 备用适配器；
+            - 不传（默认）：开发模式，自动用 MockAdapter(fail_mode="none")
+            - 显式传入 None：**禁止降级**，真实平台失败直接返回错误，不静默出mock图
+            - 传入具体适配器实例：使用指定适配器作为fallback
     """
-    # 默认 fallback：本阶段用 MockAdapter(none) 模拟切换备用平台
-    if fallback_adapter is None:
+    # 默认 fallback：开发模式用 MockAdapter(none) 模拟切换备用平台；显式传None则不使用任何fallback
+    if fallback_adapter is _NO_FALLBACK:
         # 局部导入避免循环依赖
         from boss_aigc.execution.mock_adapter import MockAdapter
-
         fallback_adapter = MockAdapter(fail_mode="none")
+    # 当 fallback_adapter is None 时：保持None，run_execution中判断为None表示不降级
 
     def handler(upstream: Any, context: SessionContext) -> TaskResult:
         # 取 TaskExecution：优先 upstream，回退 context.execution
@@ -141,12 +147,34 @@ def create_default_orchestration() -> LayerHandler:
 def create_default_execution() -> LayerHandler:
     """构建开箱即用的执行层处理器。
 
-    使用全局 registry + register_default_adapters() 注册默认 Mock 适配器；
-    retry_max 从全局 config 取；fallback 用 MockAdapter(none) 默认实例。
+    使用全局 registry + register_default_adapters() 注册默认适配器；
+    retry_max 从全局 config 取；
+    fallback 策略：
+    - 若配置了真实平台（modelscope/nanobanana）：**不设置任何fallback**，失败直接返回错误，
+      避免静默降级到Mock生成假图
+    - 若仅注册了mock（未配置任何真实平台，纯开发模式）：保持默认Mock fallback，方便开发测试
     """
+    from boss_aigc.contracts.enums import PlatformKind
     registry = register_default_adapters()
     settings = get_settings()
-    return build_execution_handler(
-        registry,
-        retry_max=settings.retry_max,
+
+    # 检查是否配置了真实平台适配器
+    has_real_platform = any(
+        kind != PlatformKind.MOCK
+        for kind in registry.list_kinds()
     )
+
+    if has_real_platform:
+        # 配置了真实平台：显式传 None，**禁止**降级到mock，失败就报错给用户
+        logger.info("检测到真实平台适配器，已禁用Mock降级，失败将直接返回错误")
+        return build_execution_handler(
+            registry,
+            retry_max=settings.retry_max,
+            fallback_adapter=None,
+        )
+    else:
+        # 仅mock模式：使用默认fallback（保持原开发体验）
+        return build_execution_handler(
+            registry,
+            retry_max=settings.retry_max,
+        )

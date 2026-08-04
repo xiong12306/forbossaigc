@@ -49,6 +49,7 @@ MAIN_LAYERS: list[str] = [
 #   - UNDERSTANDING：理解层缺槽位需追问，禁止进入 confirmation
 #   - CANCELLED：老板取消任务
 #   - FAILED：执行失败
+#   - ACCEPTED：验收归档完成，本轮任务结束（后续新任务由前端重置/后端自动清状态处理）
 # 特殊：理解层把 AWAITING_CONFIRMATION 作为「移交确认层」的交接信号，
 # 此时不应早停，需继续到确认层生成摘要（见 handle_user_input 中的特判）。
 STOP_STATUSES: set[TaskStatus] = {
@@ -56,6 +57,7 @@ STOP_STATUSES: set[TaskStatus] = {
     TaskStatus.UNDERSTANDING,
     TaskStatus.CANCELLED,
     TaskStatus.FAILED,
+    TaskStatus.ACCEPTED,
 }
 
 
@@ -205,6 +207,18 @@ class Pipeline:
         upstream = self._run_layer(LAYER_ACCESS, upstream, context)
 
         # ---------- Step 2: 根据入口状态决定后续层链 ----------
+        # ACCEPTED是终态：验收归档完成，收到新输入自动重置上下文开始新任务
+        if prev_status == TaskStatus.ACCEPTED:
+            # 清空旧任务状态，回到初始PENDING状态，按新任务处理
+            context.intent = None
+            context.pending_summary = None
+            context.confirmed_task = None
+            context.execution = None
+            context.result = None
+            context.status = TaskStatus.PENDING
+            context.extras.clear()
+            prev_status = TaskStatus.PENDING
+
         if prev_status == TaskStatus.AWAITING_CONFIRMATION:
             # 第二+轮：老板在回复待确认摘要，直接进 confirmation 层
             # 跳过 understanding，避免「确认」被识别为新任务
@@ -216,9 +230,16 @@ class Pipeline:
             ]
         elif prev_status == TaskStatus.DELIVERED:
             # 上一轮已交付，老板本轮输入是验收反馈（可以了/改/重做），
-            # 直接进 delivery 层处理验收，跳过 understanding/confirmation/orchestration/execution，
-            # 避免把「可以了」当新任务
+            # 先进 delivery 层处理验收；若 delivery 处理后状态变为 CONFIRMED（重做/重新生成），
+            # 需继续执行 orchestration → execution → delivery 重新生成；
+            # 若变为 AWAITING_CONFIRMATION（修改任务），等下一轮老板确认；
+            # 其他状态（ACCEPTED/FAILED/DELIVERED）直接返回。
             remaining_layers = [LAYER_DELIVERY]
+            post_acceptance_layers: list[str] = [
+                LAYER_ORCHESTRATION,
+                LAYER_EXECUTION,
+                LAYER_DELIVERY,
+            ]
         else:
             # fresh 或 UNDERSTANDING(needs_follow_up)：从 understanding 跑全链
             remaining_layers = [
@@ -248,6 +269,25 @@ class Pipeline:
                     extra={"layer": layer_name, "task_id": context.session_id},
                 )
                 break
+
+        # 验收反馈后处理：若 delivery 处理完重做操作后状态变为 CONFIRMED，
+        # 继续执行 orchestration → execution → delivery 重新生成任务
+        if prev_status == TaskStatus.DELIVERED and context.status == TaskStatus.CONFIRMED:
+            logger.info(
+                "验收反馈触发重新生成，继续执行执行链路",
+                extra={"task_id": context.session_id},
+            )
+            # 清理旧 result，避免前端拿到旧 artifacts
+            context.result = None
+            for layer_name in post_acceptance_layers:
+                upstream = self._run_layer(layer_name, upstream, context)
+                if context.status in STOP_STATUSES:
+                    logger.info(
+                        "重新生成链路：层 %s 执行后 status=%s，早停",
+                        layer_name, context.status.value,
+                        extra={"layer": layer_name, "task_id": context.session_id},
+                    )
+                    break
 
         # ---------- Step 4: 构造 Response ----------
         message = self._build_response_message(context)

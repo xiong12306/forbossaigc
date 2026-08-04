@@ -201,7 +201,7 @@ export default function Dashboard() {
   return (
     <div className="h-screen w-screen flex flex-col bg-charcoal-900 text-ivory-500 overflow-hidden">
       {/* 顶栏 */}
-      <header className="flex items-center justify-between px-6 py-3 bg-brown-900/70 backdrop-blur border-b border-gold-500/20">
+      <header className="flex items-center justify-between px-4 lg:px-6 py-3 bg-brown-900/70 backdrop-blur border-b border-gold-500/20">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center shadow-gold-glow">
             <Sparkles className="w-4 h-4 text-charcoal-900" />
@@ -231,7 +231,7 @@ export default function Dashboard() {
       </header>
 
       {/* 主内容区 */}
-      <div className="flex-1 overflow-y-auto px-6 py-6">
+      <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-4 lg:py-6">
         <div className="max-w-6xl mx-auto space-y-6">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-24 gap-3">
@@ -252,7 +252,7 @@ export default function Dashboard() {
           ) : (
             <>
               {/* 数据卡片 2x2 网格 */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {stats.map((stat, i) => {
                   const Icon = stat.icon;
                   const up = stat.change >= 0;
@@ -268,7 +268,7 @@ export default function Dashboard() {
                       <div
                         className="absolute -top-8 -right-8 w-28 h-28 rounded-full opacity-30 pointer-events-none"
                         style={{
-                          background: "radial-gradient(circle, rgba(201,169,97,0.4), transparent 70%)",
+                          background: "radial-gradient(circle, rgba(37, 99, 235,0.4), transparent 70%)",
                         }}
                       />
                       <div className="relative flex items-start justify-between">
@@ -329,13 +329,13 @@ export default function Dashboard() {
                               style={{
                                 height: `${heightPct}%`,
                                 background:
-                                  "linear-gradient(to top, #B89650 0%, #D4B970 50%, #E0C988 100%)",
-                                boxShadow: "0 0 12px rgba(201, 169, 97, 0.3)",
+                                  "linear-gradient(to top, #1D4ED8 0%, #3B82F6 50%, #3B82F6 100%)",
+                                boxShadow: "0 0 12px rgba(37, 99, 235, 0.3)",
                                 animationDelay: `${i * 60}ms`,
                               }}
                             />
                             {/* 顶部数值 */}
-                            <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] text-gold-300/80 whitespace-nowrap">
+                            <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] text-ivory-400 whitespace-nowrap">
                               ¥{(s.gmv / 1000).toFixed(1)}k
                             </div>
                           </div>

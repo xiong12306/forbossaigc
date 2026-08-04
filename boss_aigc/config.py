@@ -67,8 +67,8 @@ class Settings:
     high_cost_credits_threshold: int = 200    # 高成本积分阈值
     high_cost_threshold: int = 20             # 确认层高成本任务积分阈值（estimated_cost > 此值需二次确认）
     retry_max: int = 3                        # 适配器失败重试上限
-    poll_interval_sec: float = 2.0           # 轮询间隔
-    request_timeout_sec: float = 60.0         # 单次请求超时（生图需要更长时间）
+    poll_interval_sec: float = float(os.environ.get("POLL_INTERVAL_SEC", "2.0"))  # 轮询间隔
+    request_timeout_sec: float = float(os.environ.get("REQUEST_TIMEOUT_SEC", "180"))  # 单次请求超时（文生图通常需60-180s）
 
     default_delivery_channel: str = "dialog"  # 默认交付通道（dialog/wechat/wecom）
     use_real_platform: bool = os.environ.get("USE_REAL_PLATFORM", "").strip().lower() in ("true", "1", "yes")  # 是否使用真实平台（True=NanoBanana，False=Mock）

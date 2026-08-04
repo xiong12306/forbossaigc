@@ -1,8 +1,7 @@
 #!/bin/bash
-# BossAIGC 生产环境更新脚本
-# 在服务器上执行：从 Git 拉取最新代码，重新构建部署
+# BossAIGC 生产环境更新脚本（在服务器上执行）
+# 基于 GHCR 镜像拉取更新，无需本地构建
 # 用法：bash /opt/bossaigc/update.sh
-# 也可通过 CI/CD 远程调用：ssh root@SERVER_IP 'bash /opt/bossaigc/update.sh'
 
 set -e
 
@@ -15,42 +14,41 @@ echo "==========================================" | tee -a "$LOG_FILE"
 
 cd "$DEPLOY_DIR"
 
-# 1. 从 Git 拉取最新代码（如果是 Git 仓库）
-if [ -d ".git" ]; then
-    echo "[1/4] 从 Git 拉取最新代码..." | tee -a "$LOG_FILE"
-    git fetch origin
-    git reset --hard origin/main 2>/dev/null || git reset --hard origin/master 2>/dev/null || echo "  无 main/master 分支，跳过 git pull"
-else
-    echo "[1/4] 非 Git 仓库，跳过拉取（请通过 scp 上传代码）" | tee -a "$LOG_FILE"
-fi
-
-# 2. 确保存在 .env
-if [ ! -f ".env" ] && [ -f ".env.example" ]; then
-    echo "[2/4] 创建 .env 配置..." | tee -a "$LOG_FILE"
-    cp .env.example .env
-    JWT_SECRET=$(openssl rand -hex 32)
-    sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" .env
-    echo "  请编辑 .env 填入必要配置后重新运行" | tee -a "$LOG_FILE"
+# 1. 确保 .env 存在
+if [ ! -f ".env" ]; then
+    echo "[1/4] ❌ .env 不存在，请先运行 deploy.sh" | tee -a "$LOG_FILE"
     exit 1
-else
-    echo "[2/4] .env 已存在" | tee -a "$LOG_FILE"
+fi
+echo "[1/4] .env 已存在" | tee -a "$LOG_FILE"
+
+# 2. 记录当前镜像 ID（用于回滚）
+OLD_IMAGE_ID=$(docker compose images app 2>/dev/null | grep app | awk '{print $3}' || echo "")
+echo "[2/4] 当前镜像: ${OLD_IMAGE_ID:-无}" | tee -a "$LOG_FILE"
+
+# 3. 拉取最新镜像并重启
+echo "[3/4] 拉取最新镜像..." | tee -a "$LOG_FILE"
+docker compose pull app
+
+NEW_IMAGE_ID=$(docker compose images app 2>/dev/null | grep app | awk '{print $3}' || echo "")
+
+# 镜像未变化则跳过
+if [ -n "$OLD_IMAGE_ID" ] && [ "$OLD_IMAGE_ID" = "$NEW_IMAGE_ID" ]; then
+    echo "  镜像无变化，跳过部署" | tee -a "$LOG_FILE"
+    exit 0
 fi
 
-# 3. 重新构建并启动
-echo "[3/4] 重新构建并启动服务..." | tee -a "$LOG_FILE"
-docker compose down --remove-orphans
-docker compose up -d --build
+echo "  新镜像: $NEW_IMAGE_ID" | tee -a "$LOG_FILE"
+echo "  重启服务..." | tee -a "$LOG_FILE"
+docker compose up -d --remove-orphans
 
 # 4. 健康检查
-echo "[4/4] 等待服务启动..." | tee -a "$LOG_FILE"
+echo "[4/4] 健康检查..." | tee -a "$LOG_FILE"
 sleep 5
 
-# 通过 docker exec 直接在容器内检查，避免端口/HTTPS 重定向问题
-for i in {1..15}; do
-    if docker compose exec -T app curl -sf http://localhost:8000/api/health &> /dev/null; then
+for i in $(seq 1 15); do
+    if docker compose exec -T app curl -sf http://localhost:8000/api/health 2>/dev/null; then
         echo "" | tee -a "$LOG_FILE"
         echo "✅ 部署成功！$(date '+%Y-%m-%d %H:%M:%S')" | tee -a "$LOG_FILE"
-        echo "" | tee -a "$LOG_FILE"
         echo "  访问地址: https://xjloveqrj.pw" | tee -a "$LOG_FILE"
         exit 0
     fi
@@ -58,6 +56,20 @@ for i in {1..15}; do
     sleep 3
 done
 
-echo "❌ 服务启动超时，查看日志：docker compose logs --tail=50" | tee -a "$LOG_FILE"
+# 健康检查失败，自动回滚
+echo "❌ 健康检查失败，尝试回滚..." | tee -a "$LOG_FILE"
+if [ -n "$OLD_IMAGE_ID" ] && [ "$OLD_IMAGE_ID" != "$NEW_IMAGE_ID" ]; then
+    echo "  回滚到旧镜像: $OLD_IMAGE_ID" | tee -a "$LOG_FILE"
+    IMAGE_NAME=$(grep "^IMAGE_NAME=" .env | cut -d'=' -f2-)
+    docker tag "$OLD_IMAGE_ID" "$IMAGE_NAME"
+    docker compose up -d --no-deps app
+    sleep 5
+    if docker compose exec -T app curl -sf http://localhost:8000/api/health 2>/dev/null; then
+        echo "✅ 回滚成功" | tee -a "$LOG_FILE"
+        exit 0
+    fi
+fi
+
+echo "❌ 回滚失败，请检查日志：" | tee -a "$LOG_FILE"
 docker compose logs --tail=30 app | tee -a "$LOG_FILE"
 exit 1

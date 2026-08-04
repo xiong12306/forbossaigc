@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File as FastAPIFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -33,7 +33,7 @@ from boss_aigc.auth import (
 from boss_aigc.contracts.enums import TaskStatus
 from boss_aigc.pipeline import Pipeline, Response, SessionContext
 from boss_aigc.db import init_db
-from boss_aigc.api import dashboard, products, assets, marketing, service, finance
+from boss_aigc.api import dashboard, products, assets, marketing, service, finance, canvas
 
 app = FastAPI(title="BossAIGC 老板 AI 助手 API", version="0.3.0")
 
@@ -41,7 +41,7 @@ app = FastAPI(title="BossAIGC 老板 AI 助手 API", version="0.3.0")
 init_db()
 
 # ---------- CORS 配置（环境变量化）----------
-_default_origins = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5175,http://127.0.0.1:5175"
+_default_origins = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5175,http://127.0.0.1:5175,http://localhost:5176,http://127.0.0.1:5176"
 _allowed_origins = [
     o.strip() for o in os.environ.get("ALLOWED_ORIGINS", _default_origins).split(",")
     if o.strip()
@@ -74,8 +74,21 @@ def _get_or_create_session(session_id: Optional[str]) -> tuple[str, Pipeline, Se
 
 
 # ---------- 认证中间件 ----------
-# 白名单：登录、健康检查、metrics、文档
-_AUTH_WHITELIST = {"/api/auth/login", "/api/health", "/metrics", "/", "/docs", "/openapi.json", "/redoc"}
+# 白名单：登录、健康检查、metrics、文档、对话核心API（聊天/上传/重置/图库）
+_AUTH_WHITELIST = {
+    "/api/auth/login",
+    "/api/health",
+    "/api/chat",
+    "/api/upload",
+    "/api/reset",
+    "/api/gallery",
+    "/api/canvas/generate",
+    "/metrics",
+    "/",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+}
 
 
 @app.middleware("http")
@@ -116,6 +129,7 @@ async def auth_middleware(request: Request, call_next):
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
+    images: list[str] = []  # 老板上传的参考图 URL 列表
 
 
 class SummaryOut(BaseModel):
@@ -251,10 +265,79 @@ def _build_chat_response(resp: Response, ctx: SessionContext) -> ChatResponse:
 
 # ---------- 业务路由 ----------
 
+# ---------- 文件上传 ----------
+_UPLOAD_DIR = Path(__file__).parent / "uploads"
+_UPLOAD_DIR.mkdir(exist_ok=True)
+
+# 允许的图片扩展名
+_ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+_MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = FastAPIFile(...)):
+    """上传图片文件，返回可访问的 URL。"""
+    # 校验扩展名
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in _ALLOWED_EXTENSIONS:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": f"不支持的文件类型: {ext}，仅支持 {', '.join(_ALLOWED_EXTENSIONS)}"},
+        )
+
+    # 读取并校验大小
+    content = await file.read()
+    if len(content) > _MAX_UPLOAD_SIZE:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "文件过大，最大支持 10MB"},
+        )
+
+    # 保存文件
+    filename = f"{uuid.uuid4().hex[:12]}{ext}"
+    filepath = _UPLOAD_DIR / filename
+    filepath.write_bytes(content)
+
+    url = f"/uploads/{filename}"
+    return {"url": url, "filename": file.filename}
+
+
+# 挂载 uploads 目录为静态文件
+app.mount("/uploads", StaticFiles(directory=str(_UPLOAD_DIR)), name="uploads")
+
+
+# ---------- 图库（已生成图片查看）----------
+_ALLOWED_IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+
+@app.get("/api/gallery")
+def list_gallery():
+    """扫描 uploads 目录，返回所有已生成图片列表（按时间倒序）。"""
+    files: list[dict[str, Any]] = []
+    for f in _UPLOAD_DIR.iterdir():
+        if not f.is_file():
+            continue
+        if f.suffix.lower() not in _ALLOWED_IMG_EXTS:
+            continue
+        stat = f.stat()
+        files.append({
+            "filename": f.name,
+            "url": f"/uploads/{f.name}",
+            "size": stat.st_size,
+            "created_at": stat.st_ctime,
+        })
+    # 按创建时间倒序
+    files.sort(key=lambda x: x["created_at"], reverse=True)
+    return files
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(req: ChatRequest) -> ChatResponse:
     """处理一轮老板输入，返回助手反馈。"""
     session_id, pipeline, ctx = _get_or_create_session(req.session_id)
+    # 把老板上传的参考图存入 extras，供理解层/执行层读取
+    if req.images:
+        ctx.extras["uploaded_images"] = req.images
     resp = pipeline.handle_user_input(req.message, ctx)
     return _build_chat_response(resp, ctx)
 
@@ -300,6 +383,7 @@ app.include_router(assets.router)
 app.include_router(marketing.router)
 app.include_router(service.router)
 app.include_router(finance.router)
+app.include_router(canvas.router)
 
 
 # ---------- 前端静态文件托管（生产模式）----------

@@ -15,6 +15,12 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        timeout: 600000,  // 10分钟超时，图片生成需要较长时间
+        proxyTimeout: 600000,
+      },
+      '/uploads': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
       },
     },
   },

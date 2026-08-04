@@ -28,6 +28,9 @@ from boss_aigc.delivery.packager import DeliveryPackage, package_result
 
 logger = get_logger(__name__, layer="delivery")
 
+# context.extras 中标记 TTS 播报文本的 key
+EXTRA_SPEAK_TEXT_DL = "speak_text"
+
 
 def build_delivery_handler(
     asset_store: Optional[Any] = None,
@@ -50,7 +53,7 @@ def build_delivery_handler(
     def handler(upstream: Any, context: SessionContext) -> Any:
         # 区分 A/B：TaskResult → 分支 A；str → 分支 B
         if isinstance(upstream, TaskResult):
-            return _branch_a_deliver(upstream, context, pusher)
+            return _branch_a_deliver(upstream, context, pusher, asset_store)
         if isinstance(upstream, str):
             return _branch_b_acceptance(upstream, context, asset_store)
         # 兜底：upstream 既非 TaskResult 也非 str，尝试用 context.result 走分支 A
@@ -59,7 +62,7 @@ def build_delivery_handler(
             type(upstream).__name__,
         )
         if context.result is not None:
-            return _branch_a_deliver(context.result, context, pusher)
+            return _branch_a_deliver(context.result, context, pusher, asset_store)
         # 实在没有 result，按 OTHER 验收反馈处理
         text = str(upstream) if upstream is not None else ""
         return _branch_b_acceptance(text, context, asset_store)
@@ -72,15 +75,34 @@ def _branch_a_deliver(
     task_result: TaskResult,
     context: SessionContext,
     pusher: DeliveryPusher,
-) -> DeliveryPackage:
-    """分支 A：打包结果 + 默认 dialog 通道推送，保持 status=DELIVERED 等验收。"""
+    asset_store: Optional[Any] = None,
+) -> Any:
+    """分支 A：打包结果 + 默认 dialog 通道推送。
+    快速通道（auto_accept=True）：交付后自动验收归档，无需老板手动点确认。
+    正常流程：保持 status=DELIVERED 等老板验收。"""
     # 1. 打包
     package = package_result(task_result)
     # 2. 推送（默认 dialog 通道，把 summary_text 写入 context.extras['speak_text']）
     pusher.push(package, channel="dialog", context=context)
     # 3. 写回 context.result 兜底（执行层应已写入，此处幂等）
     context.result = task_result
-    # 4. 保持 status=DELIVERED，等老板验收（不主动改为 ACCEPTED）
+
+    # 4. 快速通道：自动验收归档
+    auto_accept = bool(context.extras.get("auto_accept"))
+    if auto_accept:
+        logger.info(
+            "快速通道自动验收: result_id=%s, artifacts=%d",
+            package.result_id, len(package.artifacts),
+        )
+        context.extras.pop("auto_accept", None)
+        # 直接调用 ACCEPT 处理逻辑归档
+        from boss_aigc.delivery.acceptance import AcceptanceAction, handle_acceptance
+        new_status, prompt = handle_acceptance(AcceptanceAction.ACCEPT, context, asset_store)
+        context.extras[EXTRA_SPEAK_TEXT_DL] = prompt
+        logger.info("快速通道自动验收完成: status=%s", new_status.value)
+        return package
+
+    # 5. 正常流程：保持 status=DELIVERED，等老板验收
     context.status = TaskStatus.DELIVERED
     logger.info(
         "分支 A 交付完成: result_id=%s, artifacts=%d, 等老板验收",

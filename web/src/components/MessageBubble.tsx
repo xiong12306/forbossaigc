@@ -24,6 +24,19 @@ export default function MessageBubble({ message }: Props) {
             : "bg-brown-800/80 text-ivory-500 border border-gold-500/30 rounded-bl-md"
         }`}
       >
+        {/* 老板上传的参考图 */}
+        {message.images && message.images.length > 0 && (
+          <div className={`flex gap-2 flex-wrap mb-2 ${message.text ? "" : ""}`}>
+            {message.images.map((url, idx) => (
+              <img
+                key={idx}
+                src={url}
+                alt={`参考图${idx + 1}`}
+                className="max-w-[200px] max-h-[200px] rounded-lg object-cover"
+              />
+            ))}
+          </div>
+        )}
         {message.text}
         {message.followUp && (
           <div className="mt-2 pt-2 border-t border-gold-500/20 text-gold-300 text-xs">

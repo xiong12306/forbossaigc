@@ -157,7 +157,7 @@ export default function Finance() {
   return (
     <div className="h-screen w-screen flex flex-col bg-charcoal-900 text-ivory-500 overflow-hidden">
       {/* 顶栏 */}
-      <header className="flex items-center justify-between px-6 py-3 bg-brown-900/70 backdrop-blur border-b border-gold-500/20">
+      <header className="flex items-center justify-between px-4 lg:px-6 py-3 bg-brown-900/70 backdrop-blur border-b border-gold-500/20">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center shadow-gold-glow">
             <Receipt className="w-4 h-4 text-charcoal-900" />
@@ -173,7 +173,7 @@ export default function Finance() {
       </header>
 
       {/* 主内容区 */}
-      <div className="flex-1 overflow-y-auto px-6 py-6">
+      <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-4 lg:py-6">
         <div className="max-w-6xl mx-auto space-y-6">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-24 gap-3">
@@ -209,7 +209,7 @@ export default function Finance() {
                       <div
                         className="absolute -top-8 -right-8 w-28 h-28 rounded-full opacity-30 pointer-events-none"
                         style={{
-                          background: "radial-gradient(circle, rgba(201,169,97,0.4), transparent 70%)",
+                          background: "radial-gradient(circle, rgba(37, 99, 235,0.4), transparent 70%)",
                         }}
                       />
                       <div className="relative flex items-start justify-between">
@@ -251,8 +251,8 @@ export default function Finance() {
                     transition={{ delay: 0.4, duration: 0.8, ease: "easeOut" }}
                     className="absolute inset-y-0 left-0 rounded-full"
                     style={{
-                      background: "linear-gradient(to right, #B89650 0%, #D4B970 50%, #E0C988 100%)",
-                      boxShadow: "0 0 12px rgba(201, 169, 97, 0.4)",
+                      background: "linear-gradient(to right, #1D4ED8 0%, #3B82F6 50%, #3B82F6 100%)",
+                      boxShadow: "0 0 12px rgba(37, 99, 235, 0.4)",
                     }}
                   />
                 </div>
@@ -278,11 +278,11 @@ export default function Finance() {
                   {/* 图例 */}
                   <div className="flex items-center gap-4 text-[11px]">
                     <span className="flex items-center gap-1.5 text-ivory-400/70">
-                      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#D4B970" }} />
+                      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#3B82F6" }} />
                       收入
                     </span>
                     <span className="flex items-center gap-1.5 text-ivory-400/70">
-                      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#D97757" }} />
+                      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#0EA5E9" }} />
                       支出
                     </span>
                   </div>
@@ -306,12 +306,12 @@ export default function Finance() {
                                 style={{
                                   height: `${incomePct}%`,
                                   background:
-                                    "linear-gradient(to top, #B89650 0%, #D4B970 60%, #E0C988 100%)",
-                                  boxShadow: "0 0 10px rgba(201, 169, 97, 0.25)",
+                                    "linear-gradient(to top, #1D4ED8 0%, #3B82F6 60%, #3B82F6 100%)",
+                                  boxShadow: "0 0 10px rgba(37, 99, 235, 0.25)",
                                   animationDelay: `${i * 60}ms`,
                                 }}
                               />
-                              <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[9px] text-gold-300/80 whitespace-nowrap">
+                              <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[9px] text-ivory-400 whitespace-nowrap">
                                 {(m.income / 1000).toFixed(1)}k
                               </div>
                             </div>
@@ -322,8 +322,8 @@ export default function Finance() {
                                 style={{
                                   height: `${expensePct}%`,
                                   background:
-                                    "linear-gradient(to top, #C26548 0%, #D97757 60%, #E08A6E 100%)",
-                                  boxShadow: "0 0 10px rgba(217, 119, 87, 0.25)",
+                                    "linear-gradient(to top, #0284C7 0%, #0EA5E9 60%, #0EA5E9 100%)",
+                                  boxShadow: "0 0 10px rgba(14, 165, 233, 0.25)",
                                   animationDelay: `${i * 60 + 30}ms`,
                                 }}
                               />
@@ -388,7 +388,7 @@ export default function Finance() {
                                 className="h-full rounded-full"
                                 style={{
                                   width: `${pct}%`,
-                                  background: "linear-gradient(to right, #C26548, #D97757)",
+                                  background: "linear-gradient(to right, #0284C7, #0EA5E9)",
                                 }}
                               />
                             </div>

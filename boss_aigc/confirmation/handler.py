@@ -68,8 +68,9 @@ def _branch_first_turn(
     context: SessionContext,
     state_machine: ConfirmationStateMachine,
     asset_store: Optional[Any],
-) -> TaskSummary:
-    """首次进入确认层：upstream 是 TaskIntent，构建摘要并等待老板确认。"""
+) -> Any:
+    """首次进入确认层：upstream 是 TaskIntent，构建摘要并等待老板确认。
+    对于「一键出图」快速指令（已上传参考图+选了类型），直接自动确认放行。"""
     # 校验上游产出
     if not isinstance(upstream, TaskIntent):
         # 异常路径：upstream 不是 intent，记日志并按 context.intent 兜底
@@ -88,6 +89,41 @@ def _branch_first_turn(
         upstream = context.intent
 
     intent: TaskIntent = upstream
+
+    # 快速通道：检测到「一键出X」指令且有参考图，直接自动确认放行（无需老板点确认）
+    raw_text = (intent.raw_text or "").strip()
+    has_ref_image = "reference_image" in intent.slots
+    is_quick_cmd = raw_text.startswith("一键出")
+    if is_quick_cmd and has_ref_image:
+        logger.info("检测到一键出图快速指令（有参考图），跳过确认直接放行")
+        # 确保有product默认值（一键出指令抽取出的product可能为空或乱码）
+        if not intent.product or len(intent.product) < 1:
+            intent.product = "参考图商品"
+        from boss_aigc.understanding.schemas import SLOT_SCHEMAS
+        schema = SLOT_SCHEMAS.get(intent.task_type, {})
+        for slot_name, (required, default) in schema.items():
+            if not required and default is not None and slot_name not in intent.slots:
+                intent.slots[slot_name] = SlotValue(
+                    name=slot_name, value=default, confidence=1.0,
+                )
+                if slot_name == "product" and not intent.product:
+                    intent.product = str(default)
+        summary = build_summary(intent, asset_store=asset_store)
+        confirmed_task = ConfirmedTask(
+            task_id=uuid.uuid4().hex[:12],
+            intent=intent,
+            summary=summary,
+            confirmed_at=datetime.now(),
+        )
+        context.intent = intent
+        context.pending_summary = None
+        context.confirmed_task = confirmed_task
+        context.status = TaskStatus.CONFIRMED
+        context.extras[EXTRA_SPEAK_TEXT] = "好的，马上开始生成"
+        context.extras["auto_accept"] = True  # 标记快速通道：交付后自动验收归档
+        context.extras.pop(EXTRA_AWAITING_SECONDARY, None)
+        logger.info("快速指令确认锁放行: task_id=%s", confirmed_task.task_id)
+        return confirmed_task
 
     # 1. 构建摘要
     summary = build_summary(intent, asset_store=asset_store)

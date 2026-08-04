@@ -84,10 +84,11 @@ def run_step_with_retry(
                 return status, list(artifacts or [])
 
             if status == TaskStatus.EXECUTING:
-                if not is_mock and polls <= 2:
-                    import time
-                    from boss_aigc.config import get_settings
-                    time.sleep(get_settings().poll_interval_sec)
+                import time
+                from boss_aigc.config import get_settings
+                # 自适应轮询：ModelScope submit 内部已同步等待结果，
+                # 此处 poll 通常立即返回 DELIVERED，用短间隔即可
+                time.sleep(min(get_settings().poll_interval_sec, 1.0))
                 continue
 
             if status == TaskStatus.FAILED:

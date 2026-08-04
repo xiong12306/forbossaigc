@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import Home from "@/pages/Home";
 import Login from "@/pages/Login";
 import ImageStudio from "@/pages/ImageStudio";
+import CanvasPage from "@/pages/CanvasPage";
 import PlatformLayout from "@/components/PlatformLayout";
 import RequireAuth from "@/components/RequireAuth";
 import Dashboard from "@/pages/Dashboard";
@@ -25,6 +26,16 @@ export default function App() {
           element={
             <RequireAuth>
               <Home />
+            </RequireAuth>
+          }
+        />
+
+        {/* 无限画布（需要登录） */}
+        <Route
+          path="/canvas"
+          element={
+            <RequireAuth>
+              <CanvasPage />
             </RequireAuth>
           }
         />

@@ -48,7 +48,7 @@ def test_submit_poll_succeed(monkeypatch):
     _patch(
         monkeypatch,
         submit_resp={"task_id": "t1"},
-        poll_resps=[{"task_status": "RUNNING"},
+        poll_resps=[{"task_status": "PROCESSING"},
                     {"task_status": "SUCCEED",
                      "output_images": ["https://img.example/a.png"]}],
     )

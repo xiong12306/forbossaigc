@@ -128,7 +128,7 @@ export default function ImageStudio() {
   return (
     <div className="min-h-full flex flex-col bg-charcoal-900 text-ivory-500">
       {/* 页面标题 */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-gold-500/15">
+      <div className="flex items-center justify-between px-4 lg:px-6 py-4 border-b border-gold-500/15">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center">
             <Wand2 className="w-4 h-4 text-charcoal-900" />
@@ -138,7 +138,7 @@ export default function ImageStudio() {
       </div>
 
       {/* 主内容区 */}
-      <div className="flex-1 overflow-y-auto px-6 py-8">
+      <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-8">
         <div className="max-w-3xl mx-auto">
           <AnimatePresence mode="wait">
             {/* 步骤1：填写表单 */}
@@ -329,8 +329,8 @@ export default function ImageStudio() {
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                     {artifacts.map((artifact, i) => {
                       const isRealImage = artifact.kind === "IMAGE" &&
-                        artifact.url_or_path &&
-                        artifact.url_or_path.startsWith("http");
+                        !!artifact.url_or_path &&
+                        !artifact.url_or_path.startsWith("mock://");
                       return (
                         <motion.div
                           key={artifact.artifact_id}
@@ -352,7 +352,7 @@ export default function ImageStudio() {
                               <div
                                 className="absolute inset-0 opacity-30"
                                 style={{
-                                  background: "radial-gradient(circle at 30% 30%, rgba(201,169,97,0.4), transparent 60%)",
+                                  background: "radial-gradient(circle at 30% 30%, rgba(37, 99, 235,0.4), transparent 60%)",
                                 }}
                               />
                               <ImageIcon className="w-8 h-8 text-gold-400 relative" />

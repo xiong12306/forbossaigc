@@ -19,6 +19,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
+from boss_aigc.asset.db_archive import archive_accepted_task
 from boss_aigc.contracts.enums import TaskStatus, TaskType
 from boss_aigc.contracts.execution import ConfirmedTask
 from boss_aigc.contracts.intent import SlotValue, TaskIntent
@@ -190,6 +191,18 @@ def _handle_accept(
             intent is not None, summary is not None, result is not None,
             asset_store is not None,
         )
+
+    # DB 双写：写 ai_tasks + assets，打通平台资产库（方案 B：失败不静默、不假装成功）
+    if intent is not None and summary is not None and result is not None:
+        try:
+            archive_accepted_task(intent, summary, result)
+        except Exception as e:
+            # 异常详情只进日志，不拼进面向老板的话术（避免泄漏内部信息 / 连接串等）
+            logger.error("验收归档落库失败: %s", e, exc_info=True)
+            context.status = TaskStatus.DELIVERED
+            prompt = "归档失败，请稍后重试"
+            context.extras[EXTRA_SPEAK_TEXT] = prompt
+            return TaskStatus.DELIVERED, prompt
 
     context.status = TaskStatus.ACCEPTED
     # 清掉交付阶段标记，避免残留影响下一轮

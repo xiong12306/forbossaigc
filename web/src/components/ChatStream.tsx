@@ -7,14 +7,15 @@ import type { ChatMessage } from "@/types";
 interface Props {
   messages: ChatMessage[];
   loading: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, images?: string[]) => void;
+  onUpload: (file: File) => Promise<string>;
   inputRef?: RefObject<HTMLInputElement>;
 }
 
 /**
  * 中间聊天流：消息气泡列表 + 底部输入栏，自动滚动到底部
  */
-export default function ChatStream({ messages, loading, onSend, inputRef }: Props) {
+export default function ChatStream({ messages, loading, onSend, onUpload, inputRef }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -56,7 +57,7 @@ export default function ChatStream({ messages, loading, onSend, inputRef }: Prop
         )}
         <div ref={endRef} />
       </div>
-      <InputBar onSend={onSend} loading={loading} inputRef={inputRef} />
+      <InputBar onSend={onSend} onUpload={onUpload} loading={loading} inputRef={inputRef} />
     </div>
   );
 }

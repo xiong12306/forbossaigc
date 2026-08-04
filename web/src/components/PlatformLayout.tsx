@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -12,6 +13,8 @@ import {
   Wallet,
   Settings,
   LogOut,
+  Menu,
+  X,
 } from "lucide-react";
 import { getUser, logout } from "@/lib/auth";
 
@@ -48,6 +51,8 @@ export default function PlatformLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const username = getUser();
+  const [open, setOpen] = useState(false);
+  useEffect(() => { setOpen(false); }, [location.pathname]);
 
   const handleLogout = () => {
     logout();
@@ -56,10 +61,40 @@ export default function PlatformLayout() {
 
   return (
     <div className="h-screen w-screen flex bg-charcoal-900 text-ivory-500 overflow-hidden">
-      {/* 侧边栏 */}
-      <aside className="w-[220px] flex-shrink-0 flex flex-col bg-brown-900/60 border-r border-gold-500/15">
+      {/* 移动顶栏（lg 以下） */}
+      <div className="lg:hidden fixed top-0 inset-x-0 z-30 h-14 flex items-center gap-3 px-4 bg-brown-900/90 backdrop-blur border-b border-gold-500/15">
+        <button
+          onClick={() => setOpen(true)}
+          aria-label="打开菜单"
+          className="p-2 -ml-2 rounded-lg text-ivory-400/80 hover:text-gold-300 hover:bg-brown-800/50 transition"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center">
+            <Sparkles className="w-3.5 h-3.5 text-charcoal-900" />
+          </div>
+          <span className="font-serif text-gold-400">BossAIGC</span>
+        </div>
+      </div>
+
+      {/* 遮罩（抽屉打开时，lg 以下） */}
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          className="lg:hidden fixed inset-0 z-40 bg-charcoal-900/60 backdrop-blur-sm"
+        />
+      )}
+
+      {/* 侧边栏 / 抽屉 */}
+      <aside
+        className={`w-[220px] flex-shrink-0 flex flex-col bg-brown-900/60 border-r border-gold-500/15
+          fixed inset-y-0 left-0 z-50 transform transition-transform duration-300
+          ${open ? "translate-x-0" : "-translate-x-full"}
+          lg:static lg:translate-x-0 lg:z-auto`}
+      >
         {/* Logo */}
-        <div className="px-5 py-4 border-b border-brown-700/50">
+        <div className="px-5 py-4 border-b border-brown-700/50 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center shadow-gold-glow">
               <Sparkles className="w-4 h-4 text-charcoal-900" />
@@ -69,6 +104,13 @@ export default function PlatformLayout() {
               <div className="text-[10px] text-ivory-400/50 mt-0.5 tracking-widest">电商老板平台</div>
             </div>
           </div>
+          <button
+            onClick={() => setOpen(false)}
+            aria-label="关闭菜单"
+            className="lg:hidden p-1.5 rounded-lg text-ivory-400/70 hover:text-gold-300 hover:bg-brown-800/50 transition"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* 导航 */}
@@ -85,6 +127,7 @@ export default function PlatformLayout() {
                     key={item.to}
                     to={item.to}
                     end={item.end}
+                    onClick={() => setOpen(false)}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all mb-0.5 ${
                         isActive
@@ -131,7 +174,7 @@ export default function PlatformLayout() {
       </aside>
 
       {/* 内容区 */}
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto pt-14 lg:pt-0">
         <motion.div
           key={location.pathname}
           initial={{ opacity: 0, y: 8 }}

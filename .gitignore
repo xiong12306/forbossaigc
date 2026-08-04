@@ -79,3 +79,11 @@ data/
 logs/
 *.db
 *.sqlite3
+
+# 运行时上传文件（用户测试图片，公开仓库不提交）
+boss_aigc/uploads/
+
+# Trae / AI 工具
+.trae/
+.claude/
+.agents/

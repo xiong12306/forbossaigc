@@ -162,7 +162,7 @@ export default function Marketing() {
 
   return (
     <div className="min-h-screen bg-charcoal-900 text-ivory-500">
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-7xl mx-auto px-4 lg:px-6 py-4 lg:py-8">
         {/* 顶部标题 */}
         <motion.header
           initial={{ opacity: 0, y: -10 }}
