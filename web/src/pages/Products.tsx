@@ -114,26 +114,15 @@ export default function Products() {
   }, [products]);
 
   return (
-    <div className="min-h-screen bg-charcoal-900 text-ivory-500">
-      <div className="max-w-7xl mx-auto px-4 lg:px-6 py-4 lg:py-8">
-        {/* 顶部标题 */}
-        <motion.header
+    <div className="min-h-full p-4 lg:p-6 text-ivory-500">
+      <div className="max-w-7xl mx-auto">
+        {/* 顶部工具栏 */}
+        <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4 }}
-          className="flex items-center justify-between mb-8"
+          className="flex items-center justify-end mb-6"
         >
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center shadow-gold-glow">
-              <Package className="w-5 h-5 text-charcoal-900" />
-            </div>
-            <div>
-              <h1 className="font-serif text-3xl text-gold-300 tracking-wide">商品管理</h1>
-              <p className="text-xs text-ivory-400/60 mt-1 tracking-[0.15em]">
-                在售 {stats.onSale} · 缺货 {stats.outStock} · 总库存 {stats.totalStock}
-              </p>
-            </div>
-          </div>
           <motion.button
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
@@ -142,7 +131,7 @@ export default function Products() {
             <Plus className="w-4 h-4" />
             添加商品
           </motion.button>
-        </motion.header>
+        </motion.div>
 
         {/* 搜索框 */}
         <div className="mb-6">

@@ -121,30 +121,8 @@ export default function Copywriting() {
   const canGenerate = product.trim().length > 0 && !loading;
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-charcoal-900 text-ivory-500 overflow-hidden">
-      {/* 顶栏 */}
-      <header className="flex items-center justify-between px-4 lg:px-6 py-3 bg-brown-900/70 backdrop-blur border-b border-gold-500/20">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center shadow-gold-glow">
-            <Type className="w-4 h-4 text-charcoal-900" />
-          </div>
-          <div className="leading-none">
-            <div className="font-serif text-xl text-gold-400 tracking-wide">文案生成</div>
-            <div className="text-[11px] text-ivory-400/70 mt-1 tracking-[0.2em]">电商文案智能撰写</div>
-          </div>
-        </div>
-        <a
-          href="/"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-ivory-400/80 hover:text-gold-300 hover:bg-brown-800/60 transition border border-transparent hover:border-gold-500/30"
-        >
-          <Sparkles className="w-3.5 h-3.5" />
-          AI 助手
-        </a>
-      </header>
-
-      {/* 主内容区 */}
-      <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-8">
-        <div className="max-w-3xl mx-auto">
+    <div className="min-h-full p-4 lg:p-6 text-ivory-500">
+      <div className="max-w-3xl mx-auto py-4">
           <AnimatePresence mode="wait">
             {/* 表单 / 加载中 */}
             {(step === "form" || step === "generating") && (
@@ -372,7 +350,6 @@ export default function Copywriting() {
             )}
           </AnimatePresence>
         </div>
-      </div>
     </div>
   );
 }

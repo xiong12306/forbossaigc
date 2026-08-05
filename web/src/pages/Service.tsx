@@ -151,26 +151,8 @@ export default function Service() {
   ] as const;
 
   return (
-    <div className="min-h-screen bg-charcoal-900 text-ivory-500">
-      <div className="max-w-7xl mx-auto px-4 lg:px-6 py-4 lg:py-8">
-        {/* 顶部标题 */}
-        <motion.header
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-          className="flex items-center gap-3 mb-8"
-        >
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center shadow-gold-glow">
-            <Headphones className="w-5 h-5 text-charcoal-900" />
-          </div>
-          <div>
-            <h1 className="font-serif text-3xl text-gold-300 tracking-wide">客服中心</h1>
-            <p className="text-xs text-ivory-400/60 mt-1 tracking-[0.15em]">
-              实时接待 · 智能回复 · 常见问答
-            </p>
-          </div>
-        </motion.header>
-
+    <div className="min-h-full p-4 lg:p-6 text-ivory-500">
+      <div className="max-w-7xl mx-auto">
         {/* 统计卡片 */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
           {STATS.map((s, idx) => {

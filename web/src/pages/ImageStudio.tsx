@@ -126,20 +126,8 @@ export default function ImageStudio() {
   const canGenerate = product.trim().length > 0 && step === "form";
 
   return (
-    <div className="min-h-full flex flex-col bg-charcoal-900 text-ivory-500">
-      {/* 页面标题 */}
-      <div className="flex items-center justify-between px-4 lg:px-6 py-4 border-b border-gold-500/15">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center">
-            <Wand2 className="w-4 h-4 text-charcoal-900" />
-          </div>
-          <div className="font-serif text-xl text-gold-400">出图中心</div>
-        </div>
-      </div>
-
-      {/* 主内容区 */}
-      <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-8">
-        <div className="max-w-3xl mx-auto">
+    <div className="min-h-full p-4 lg:p-6 text-ivory-500">
+      <div className="max-w-3xl mx-auto py-4">
           <AnimatePresence mode="wait">
             {/* 步骤1：填写表单 */}
             {step === "form" && (
@@ -433,7 +421,6 @@ export default function ImageStudio() {
               </motion.div>
             )}
           </AnimatePresence>
-        </div>
       </div>
     </div>
   );

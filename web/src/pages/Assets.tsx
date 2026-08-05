@@ -211,33 +211,18 @@ export default function Assets() {
   const totalCount = assets.length;
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-charcoal-900 text-ivory-500 overflow-hidden">
-      <header className="flex items-center justify-between px-4 lg:px-6 py-3 bg-brown-900/70 backdrop-blur border-b border-gold-500/20">
-        <div className="flex items-center gap-3">
-          <a
-            href="/"
-            className="mr-1 text-ivory-400/60 hover:text-gold-300 transition text-sm"
-          >
-            ← 返回
-          </a>
-          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center shadow-gold-glow">
-            <Layers className="w-4 h-4 text-charcoal-900" />
-          </div>
-          <div className="leading-none">
-            <div className="font-serif text-xl text-gold-400 tracking-wide">素材库</div>
-            <div className="text-[11px] text-ivory-400/70 mt-1 tracking-[0.2em]">品牌素材资产管理</div>
-          </div>
-        </div>
+    <div className="min-h-full p-4 lg:p-6 text-ivory-500">
+      {/* 顶部工具栏：计数 */}
+      <div className="flex justify-end mb-6">
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-brown-800/60 border border-gold-500/20">
           <ImageIcon className="w-3.5 h-3.5 text-gold-400" />
           <span className="text-xs text-ivory-400/80">
             共 <span className="text-gold-300 font-medium">{totalCount}</span> 项
           </span>
         </div>
-      </header>
+      </div>
 
-      <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-8">
-        <div className="max-w-6xl mx-auto">
+      <div className="max-w-6xl mx-auto">
           <div className="flex flex-wrap items-center gap-2 mb-8">
             {FILTERS.map((f) => {
               const active = filter === f.value;
@@ -388,7 +373,6 @@ export default function Assets() {
             </div>
           )}
         </div>
-      </div>
 
       {/* 大图预览 - 增强版 */}
       <AnimatePresence>

@@ -155,26 +155,15 @@ export default function Finance() {
   ];
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-charcoal-900 text-ivory-500 overflow-hidden">
-      {/* 顶栏 */}
-      <header className="flex items-center justify-between px-4 lg:px-6 py-3 bg-brown-900/70 backdrop-blur border-b border-gold-500/20">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center shadow-gold-glow">
-            <Receipt className="w-4 h-4 text-charcoal-900" />
-          </div>
-          <div className="leading-none">
-            <div className="font-serif text-xl text-gold-400 tracking-wide">财务看板</div>
-            <div className="text-[11px] text-ivory-400/70 mt-1 tracking-[0.2em]">收支利润分析</div>
-          </div>
-        </div>
+    <div className="min-h-full p-4 lg:p-6 text-ivory-500">
+      {/* 顶部工具栏：月份标签 */}
+      <div className="flex justify-end mb-6">
         <span className="px-3 py-1.5 rounded-full text-xs text-gold-300 border border-gold-500/30 bg-gold-500/10">
           {new Date().getFullYear()}年{new Date().getMonth() + 1}月
         </span>
-      </header>
+      </div>
 
-      {/* 主内容区 */}
-      <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-4 lg:py-6">
-        <div className="max-w-6xl mx-auto space-y-6">
+      <div className="max-w-6xl mx-auto space-y-6">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-24 gap-3">
               <Loader2 className="w-8 h-8 text-gold-400 animate-spin" />
@@ -415,7 +404,6 @@ export default function Finance() {
             </>
           )}
         </div>
-      </div>
     </div>
   );
 }

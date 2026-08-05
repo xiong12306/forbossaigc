@@ -73,55 +73,57 @@ export default function PlatformLayout() {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-charcoal-900 text-ivory-500 overflow-hidden">
-      {/* 全局顶部 Tab 导航栏 */}
-      <header className="flex-shrink-0 flex items-center gap-3 px-4 sm:px-6 py-2.5 bg-brown-900 border-b border-brown-700/50 z-30">
-        <Link to="/" className="flex items-center gap-3 group flex-shrink-0">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center shadow-gold-glow">
-            <Sparkles className="w-5 h-5 text-white" />
-          </div>
-          <div className="leading-none hidden sm:block">
-            <div className="font-serif text-2xl text-gold-500 tracking-wide group-hover:text-gold-600 transition">
-              BossAIGC
+      {/* 全局顶部 Tab 导航栏（与 BrandBar 保持一致大小） */}
+      <header className="flex items-center justify-between px-4 sm:px-6 py-3 bg-brown-900/70 backdrop-blur border-b border-gold-500/20 z-30">
+        <div className="flex items-center gap-4">
+          <Link to="/" className="flex items-center gap-3 group">
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center shadow-gold-glow">
+              <Sparkles className="w-4 h-4 text-white" />
             </div>
-            <div className="text-sm text-ivory-400/70 mt-1 tracking-wider">
-              老板 AI 助手
+            <div className="leading-none">
+              <div className="font-serif text-xl text-gold-400 tracking-wide">
+                BossAIGC
+              </div>
+              <div className="hidden sm:block text-[11px] text-ivory-400/70 mt-1 tracking-[0.2em]">
+                老板 AI 助手
+              </div>
             </div>
-          </div>
-        </Link>
+          </Link>
 
-        <nav className="flex items-center gap-1 ml-2 sm:ml-4 overflow-x-auto">
-          {TAB_ITEMS.map((tab) => {
-            const Icon = tab.icon;
-            const active = isTabActive(location.pathname, tab.to);
-            return (
-              <Link
-                key={tab.to}
-                to={tab.to}
-                className={`inline-flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-full text-sm sm:text-base transition border whitespace-nowrap ${
-                  active
-                    ? "bg-gold-500/10 text-gold-500 border-gold-500/40"
-                    : "text-ivory-400/70 hover:text-gold-500 hover:bg-brown-800/50 border-transparent hover:border-gold-500/30"
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                {tab.label}
-              </Link>
-            );
-          })}
-        </nav>
+          <nav className="flex items-center gap-1 sm:ml-2">
+            {TAB_ITEMS.map((tab) => {
+              const Icon = tab.icon;
+              const active = isTabActive(location.pathname, tab.to);
+              return (
+                <Link
+                  key={tab.to}
+                  to={tab.to}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition border ${
+                    active
+                      ? "text-gold-300 bg-gold-500/10 border-gold-500/30"
+                      : "text-ivory-400/70 hover:text-gold-300 hover:bg-brown-800/60 border-transparent hover:border-gold-500/30"
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {tab.label}
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
 
-        <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={() => setOpen(true)}
             aria-label="打开菜单"
-            className="lg:hidden p-2 rounded-lg text-ivory-400/80 hover:text-gold-500 hover:bg-brown-800/50 transition"
+            className="lg:hidden p-2 -ml-2 rounded-lg text-ivory-400/80 hover:text-gold-300 hover:bg-brown-800/50 transition"
           >
             <Menu className="w-5 h-5" />
           </button>
           <button
             onClick={handleLogout}
             title="退出登录"
-            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-ivory-400/60 hover:text-red-500 hover:bg-red-500/10 transition"
+            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-ivory-400/60 hover:text-red-400 hover:bg-brown-800/60 transition border border-transparent"
           >
             <LogOut className="w-3.5 h-3.5" />
             退出
@@ -148,22 +150,14 @@ export default function PlatformLayout() {
           style={{ top: 0, paddingTop: "env(safe-area-inset-top)" }}
         >
           {/* 侧边栏头部 */}
-          <div className="px-5 py-4 border-b border-brown-700/50 flex items-center justify-between flex-shrink-0">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center shadow-gold-glow">
-                <Wand2 className="w-4 h-4 text-white" />
-              </div>
-              <div className="leading-none">
-                <div className="text-sm font-semibold text-gold-500">电商平台</div>
-                <div className="text-[10px] text-ivory-400/50 mt-0.5 tracking-widest">多功能工作台</div>
-              </div>
-            </div>
+          <div className="px-4 py-3 border-b border-brown-700/40 flex items-center justify-between flex-shrink-0">
+            <span className="text-xs text-ivory-400/50 tracking-widest font-medium">功能导航</span>
             <button
               onClick={() => setOpen(false)}
               aria-label="关闭菜单"
-              className="lg:hidden p-1.5 rounded-lg text-ivory-400/70 hover:text-gold-500 hover:bg-brown-800/50 transition"
+              className="lg:hidden p-1 rounded text-ivory-400/70 hover:text-gold-500 hover:bg-brown-800/50 transition"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
 
