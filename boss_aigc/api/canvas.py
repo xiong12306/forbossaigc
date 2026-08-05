@@ -1,7 +1,7 @@
 """boss_aigc.api.canvas 无限画布专用API。
 
-直接异步调用 ModelScope API，不经过七层pipeline，不使用同步适配器，
-避免阻塞 FastAPI 事件循环。
+直接异步调用 ModelScope / NanoBanana API，不经过七层pipeline，
+避免阻塞 FastAPI 事件循环。按 model 参数分发到对应平台。
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -61,7 +62,7 @@ class CanvasGenerateRequest(BaseModel):
     prompt: str = ""
     reference_images: list[str] = []
     reference_texts: list[str] = []
-    model: str = "modelscope"
+    model: str = "modelscope"  # modelscope | nanobanana
     size: str = "1:1"
     preset: str = "main"
 
@@ -107,16 +108,8 @@ async def _download_image(client: httpx.AsyncClient, url: str) -> str:
     return local_url
 
 
-@router.post("/generate", response_model=CanvasGenerateResponse)
-async def canvas_generate(req: CanvasGenerateRequest) -> CanvasGenerateResponse:
-    """画布异步生成图片，直接调用 ModelScope API。"""
-    settings = get_settings()
-    if not settings.modelscope_api_key:
-        raise HTTPException(status_code=503, detail="ModelScope API key 未配置")
-
-    ms_size = _SIZE_MAP.get(req.size, "1024x1024")
-
-    # 构建 prompt
+def _build_final_prompt(req: CanvasGenerateRequest) -> str:
+    """构建最终 prompt：预设 + 参考文本 + 用户prompt + 质量后缀。"""
     prompt_parts: list[str] = []
     preset_desc = _PRESET_PROMPTS.get(req.preset)
     if preset_desc:
@@ -129,28 +122,143 @@ async def canvas_generate(req: CanvasGenerateRequest) -> CanvasGenerateResponse:
     if user_prompt:
         prompt_parts.append(user_prompt)
     prompt_parts.append(_QUALITY_SUFFIX)
-    final_prompt = "，".join(prompt_parts)
+    return "，".join(prompt_parts)
 
-    # 解析参考图
+
+def _resolve_ref_images(req: CanvasGenerateRequest) -> list[str]:
+    """解析参考图为 data URI 列表。"""
     ref_data_uris: list[str] = []
     for img_url in req.reference_images:
         try:
             ref_data_uris.append(_resolve_local_image(img_url))
         except HTTPException:
             logger.warning("参考图解析失败，跳过: %s", img_url)
+    return ref_data_uris
 
+
+# ============ NanoBanana 平台调用 ============
+
+def _nanobanana_generate_sync(
+    api_key: str,
+    api_base: str,
+    prompt: str,
+    ref_data_uris: list[str],
+    timeout: float,
+) -> str:
+    """同步调用 NanoBanana API，返回远程图片 URL。
+
+    NanoBanana 通过 Ace Data Cloud 接入，POST /nano-banana/images 同步返回结果。
+    支持参考图（image_url 字段传 data URI）。
+    """
+    url = f"{api_base.rstrip('/')}/images"
+    headers = {
+        "authorization": f"Bearer {api_key}",
+        "content-type": "application/json",
+    }
+    payload: dict[str, Any] = {
+        "action": "generate",
+        "prompt": prompt,
+    }
+    if ref_data_uris:
+        payload["image_url"] = ref_data_uris[0]  # NanoBanana 单参考图
+
+    resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+    resp.raise_for_status()
+    result = resp.json()
+
+    # 兼容多种响应格式提取图片 URL
+    for key in ["url", "image_url", "image", "data", "images", "result", "output"]:
+        value = result.get(key) if isinstance(result, dict) else None
+        if value is None:
+            continue
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return value
+        if isinstance(value, list) and len(value) > 0:
+            first = value[0]
+            if isinstance(first, str) and first.startswith(("http://", "https://")):
+                return first
+            if isinstance(first, dict):
+                for nested_key in ["url", "image_url", "image"]:
+                    nested_val = first.get(nested_key)
+                    if isinstance(nested_val, str) and nested_val.startswith(("http://", "https://")):
+                        return nested_val
+        if isinstance(value, dict):
+            for nested_key in ["url", "image_url", "image"]:
+                nested_val = value.get(nested_key)
+                if isinstance(nested_val, str) and nested_val.startswith(("http://", "https://")):
+                    return nested_val
+
+    raise HTTPException(status_code=502, detail=f"NanoBanana 返回未含图片URL: {str(result)[:200]}")
+
+
+async def _generate_via_nanobanana(req: CanvasGenerateRequest, final_prompt: str, ref_data_uris: list[str]) -> CanvasGenerateResponse:
+    """通过 NanoBanana 生成图片（同步API，用线程池避免阻塞事件循环）。"""
+    settings = get_settings()
+    if not settings.nanobanana_api_key:
+        raise HTTPException(status_code=503, detail="NanoBanana API key 未配置")
+
+    api_base = settings.nanobanana_api_base
+    api_key = settings.nanobanana_api_key
+    timeout = min(settings.request_timeout_sec, 180.0)
+
+    logger.info("NanoBanana 画布生成: refs=%d prompt=%s", len(ref_data_uris), final_prompt[:100])
+
+    # 重试 3 次
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            remote_url = await asyncio.to_thread(
+                _nanobanana_generate_sync,
+                api_key, api_base, final_prompt, ref_data_uris, timeout,
+            )
+            # 下载到本地
+            async with httpx.AsyncClient(trust_env=False, http2=False) as client:
+                try:
+                    local_url = await _download_image(client, remote_url)
+                except Exception as e:
+                    logger.warning("NanoBanana 下载失败，使用原始URL: %s", e)
+                    local_url = remote_url
+
+            return CanvasGenerateResponse(
+                image_url=local_url,
+                prompt_used=final_prompt,
+                model_used="nanobanana",
+            )
+        except HTTPException:
+            raise
+        except requests.exceptions.Timeout as e:
+            last_err = e
+            logger.warning("NanoBanana 超时（重试%d/3）", attempt + 1)
+        except requests.exceptions.RequestException as e:
+            last_err = e
+            logger.warning("NanoBanana 请求失败（重试%d/3）: %s", attempt + 1, str(e)[:100])
+        except Exception as e:
+            last_err = e
+            logger.warning("NanoBanana 未知错误（重试%d/3）: %s", attempt + 1, str(e)[:100])
+
+        if attempt < 2:
+            await asyncio.sleep(2)
+
+    raise HTTPException(status_code=502, detail=f"NanoBanana 生成失败（重试3次）: {last_err}")
+
+
+# ============ ModelScope 平台调用 ============
+
+async def _generate_via_modelscope(req: CanvasGenerateRequest, final_prompt: str, ref_data_uris: list[str]) -> CanvasGenerateResponse:
+    """通过 ModelScope 异步生成图片（提交+轮询）。"""
+    settings = get_settings()
+    if not settings.modelscope_api_key:
+        raise HTTPException(status_code=503, detail="ModelScope API key 未配置")
+
+    ms_size = _SIZE_MAP.get(req.size, "1024x1024")
     is_edit = len(ref_data_uris) > 0
     model_name = "Qwen/Qwen-Image-Edit-2509" if is_edit else settings.modelscope_model
 
-    logger.info(
-        "画布生成: is_edit=%s refs=%d prompt=%s",
-        is_edit, len(ref_data_uris), final_prompt[:100],
-    )
+    logger.info("ModelScope 画布生成: is_edit=%s refs=%d prompt=%s", is_edit, len(ref_data_uris), final_prompt[:100])
 
     api_base = settings.modelscope_api_base.rstrip("/")
     api_key = settings.modelscope_api_key
 
-    # 构建 API 请求体
     body: dict[str, Any] = {
         "prompt": final_prompt,
         "size": ms_size,
@@ -195,7 +303,7 @@ async def canvas_generate(req: CanvasGenerateRequest) -> CanvasGenerateResponse:
 
         logger.info("任务已提交: ms_task_id=%s", ms_task_id)
 
-        # 2. 异步轮询（不阻塞事件循环）
+        # 2. 异步轮询
         poll_url = f"{api_base}/tasks/{ms_task_id}"
         poll_headers = {
             "Authorization": f"Bearer {api_key}",
@@ -246,7 +354,7 @@ async def canvas_generate(req: CanvasGenerateRequest) -> CanvasGenerateResponse:
                 return CanvasGenerateResponse(
                     image_url=local_url,
                     prompt_used=final_prompt,
-                    model_used=req.model,
+                    model_used="modelscope",
                 )
 
             if status == "FAILED":
@@ -259,7 +367,6 @@ async def canvas_generate(req: CanvasGenerateRequest) -> CanvasGenerateResponse:
                 raise HTTPException(status_code=504, detail="生成超时（5分钟）")
 
             poll_count += 1
-            # 自适应间隔：前3次1.5秒快速检测，4-10次3秒，之后5秒
             if poll_count <= 3:
                 wait = 1.5
             elif poll_count <= 10:
@@ -267,3 +374,18 @@ async def canvas_generate(req: CanvasGenerateRequest) -> CanvasGenerateResponse:
             else:
                 wait = 5.0
             await asyncio.sleep(wait)
+
+
+# ============ 主入口：按 model 分发 ============
+
+@router.post("/generate", response_model=CanvasGenerateResponse)
+async def canvas_generate(req: CanvasGenerateRequest) -> CanvasGenerateResponse:
+    """画布异步生成图片，按 model 参数分发到 ModelScope / NanoBanana。"""
+    final_prompt = _build_final_prompt(req)
+    ref_data_uris = _resolve_ref_images(req)
+
+    model = (req.model or "modelscope").lower()
+
+    if model == "nanobanana":
+        return await _generate_via_nanobanana(req, final_prompt, ref_data_uris)
+    return await _generate_via_modelscope(req, final_prompt, ref_data_uris)
