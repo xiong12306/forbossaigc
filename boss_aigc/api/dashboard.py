@@ -3,23 +3,35 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from boss_aigc.db import get_conn
 from boss_aigc.supabase_client import get_supabase
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
+# 日期范围映射：range 参数 → 天数
+RANGE_DAYS = {"7d": 7, "30d": 30, "90d": 90}
+
+
+def _resolve_range(range_param: Optional[str]) -> int:
+    """解析 range 参数，返回天数。"""
+    if range_param and range_param in RANGE_DAYS:
+        return RANGE_DAYS[range_param]
+    return 7
+
 
 @router.get("/overview")
-def overview():
-    """最近7天汇总数据，并与前7天对比计算涨跌幅。"""
+def overview(range: Optional[str] = Query("7d", description="日期范围: 7d/30d/90d")):
+    """指定范围汇总数据，并与前一周期对比计算涨跌幅。"""
+    days = _resolve_range(range)
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    recent_start = (today - timedelta(days=6)).strftime("%Y-%m-%d")
+    recent_start = (today - timedelta(days=days - 1)).strftime("%Y-%m-%d")
     recent_end = today.strftime("%Y-%m-%d")
-    prev_start = (today - timedelta(days=13)).strftime("%Y-%m-%d")
-    prev_end = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+    prev_start = (today - timedelta(days=days * 2 - 1)).strftime("%Y-%m-%d")
+    prev_end = (today - timedelta(days=days)).strftime("%Y-%m-%d")
 
     sb = get_supabase()
     if sb:
@@ -72,15 +84,16 @@ def overview():
 
 
 @router.get("/sales-trend")
-def sales_trend():
-    """最近7天每日 GMV。"""
+def sales_trend(range: Optional[str] = Query("7d", description="日期范围: 7d/30d/90d")):
+    """指定范围每日 GMV。"""
+    days = _resolve_range(range)
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    start = (today - timedelta(days=6)).strftime("%Y-%m-%d")
+    start = (today - timedelta(days=days - 1)).strftime("%Y-%m-%d")
     end = today.strftime("%Y-%m-%d")
 
     sb = get_supabase()
     if sb:
-        rows = sb.table("daily_stats").select("stat_date,gmv").order("stat_date", desc=True).limit(7).execute().data
+        rows = sb.table("daily_stats").select("stat_date,gmv").order("stat_date", desc=True).limit(days).execute().data
         rows = list(reversed(rows))
         return [{"date": r.get("stat_date"), "gmv": r.get("gmv")} for r in rows]
 

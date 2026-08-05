@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from boss_aigc.access import create_default_access
+from boss_aigc.asset import AssetStore
 from boss_aigc.config import configure
 from boss_aigc.contracts.enums import (
     ConfirmationAction,
@@ -25,16 +26,20 @@ from boss_aigc.contracts.enums import (
     TaskType,
 )
 from boss_aigc.contracts.intent import SlotValue, TaskIntent
+from boss_aigc.delivery import create_default_delivery
+from boss_aigc.orchestration import (
+    create_default_execution,
+    create_default_orchestration,
+)
 from boss_aigc.pipeline import (
     LAYER_ACCESS,
     LAYER_CONFIRMATION,
+    LAYER_DELIVERY,
     LAYER_EXECUTION,
+    LAYER_ORCHESTRATION,
     LAYER_UNDERSTANDING,
     Pipeline,
     SessionContext,
-    _placeholder_delivery,
-    _placeholder_execution,
-    _placeholder_orchestration,
 )
 from boss_aigc.understanding import create_default_understanding
 
@@ -382,29 +387,32 @@ def test_confirmation_lock_integration() -> None:
         - 第 1 轮下任务后 status=AWAITING_CONFIRMATION 且 execution 层未被调用
         - 第 2 轮「确认」后才触发 execution
     """
-    # 用计数器包裹 execution 占位处理器，验证是否被调用
+    # 用计数器包裹真实 execution 处理器，验证是否被调用
     execution_call_count = [0]
-    placeholder_exec = _placeholder_execution
+    real_exec = create_default_execution()
 
     def counting_execution(upstream: Any, context: SessionContext) -> Any:
         execution_call_count[0] += 1
-        return placeholder_exec(upstream, context)
+        return real_exec(upstream, context)
 
-    # 同样包裹 orchestration 与 delivery 占位（便于将来扩展验证）
+    # 同样包裹 orchestration 真实处理器
     orchestration_call_count = [0]
-    placeholder_orch = _placeholder_orchestration
+    real_orch = create_default_orchestration()
 
     def counting_orchestration(upstream: Any, context: SessionContext) -> Any:
         orchestration_call_count[0] += 1
-        return placeholder_orch(upstream, context)
+        return real_orch(upstream, context)
 
-    # 构造 Pipeline：注册真实 access + understanding + confirmation，占位 orchestration/execution/delivery
+    # 构造 Pipeline：注册全部真实层处理器
     pipeline = Pipeline()
     pipeline.register_layer(LAYER_ACCESS, create_default_access())
     pipeline.register_layer(LAYER_UNDERSTANDING, create_default_understanding())
     pipeline.register_layer(LAYER_CONFIRMATION, create_default_confirmation())
-    pipeline.register_layer("orchestration", counting_orchestration)
+    pipeline.register_layer(LAYER_ORCHESTRATION, counting_orchestration)
     pipeline.register_layer(LAYER_EXECUTION, counting_execution)
+    pipeline.register_layer(
+        LAYER_DELIVERY, create_default_delivery(asset_store=AssetStore())
+    )
 
     # 第 1 轮：老板下任务
     ctx = SessionContext()
@@ -435,9 +443,9 @@ def test_confirmation_lock_integration() -> None:
     # 第 2 轮：老板回复「确认」
     resp2 = pipeline.handle_user_input("确认", ctx)
 
-    # 验证：status 应最终为 ACCEPTED（经 CONFIRMED → EXECUTING → DELIVERED → ACCEPTED）
-    assert ctx.status == TaskStatus.ACCEPTED, (
-        f"第 2 轮确认后 status 应为 ACCEPTED，实际 {ctx.status}"
+    # 验证：status 应为 DELIVERED（经 CONFIRMED → EXECUTING → DELIVERED，等老板验收）
+    assert ctx.status == TaskStatus.DELIVERED, (
+        f"第 2 轮确认后 status 应为 DELIVERED，实际 {ctx.status}"
     )
     # confirmed_task 应非空
     assert ctx.confirmed_task is not None, "第 2 轮应生成 confirmed_task"

@@ -37,8 +37,8 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
 
 // ---------- Dashboard ----------
 export const dashboardApi = {
-  overview: () => fetchJSON<any>("/api/dashboard/overview"),
-  salesTrend: () => fetchJSON<any[]>("/api/dashboard/sales-trend"),
+  overview: (range = "7d") => fetchJSON<any>(`/api/dashboard/overview?range=${range}`),
+  salesTrend: (range = "7d") => fetchJSON<any[]>(`/api/dashboard/sales-trend?range=${range}`),
   topProducts: () => fetchJSON<any[]>("/api/dashboard/top-products"),
   recentTasks: () => fetchJSON<any[]>("/api/dashboard/recent-tasks"),
 };
@@ -81,6 +81,7 @@ export const serviceApi = {
   resolveMessage: (id: number) =>
     fetchJSON<any>(`/api/service/messages/${id}/resolve`, { method: "PUT" }),
   faq: () => fetchJSON<any[]>("/api/service/faq"),
+  stats: () => fetchJSON<any>("/api/service/stats"),
 };
 
 // ---------- Finance ----------

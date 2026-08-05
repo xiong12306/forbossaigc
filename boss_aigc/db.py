@@ -124,6 +124,30 @@ CREATE TABLE IF NOT EXISTS finance_records (
     record_date TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+-- 任务历史（资产层持久化）
+CREATE TABLE IF NOT EXISTS task_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL UNIQUE,
+    task_type TEXT NOT NULL,
+    product TEXT DEFAULT '',
+    raw_text TEXT DEFAULT '',
+    summary_id TEXT DEFAULT '',
+    params TEXT DEFAULT '{}',          -- JSON
+    platform TEXT DEFAULT '',
+    result_artifacts_count INTEGER NOT NULL DEFAULT 0,
+    result_status TEXT DEFAULT '',
+    timestamp TEXT NOT NULL
+);
+
+-- 品牌风格（资产层持久化，单条全局风格）
+CREATE TABLE IF NOT EXISTS brand_styles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    style_id TEXT NOT NULL UNIQUE,
+    keywords TEXT DEFAULT '[]',        -- JSON array
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+);
 """
 
 

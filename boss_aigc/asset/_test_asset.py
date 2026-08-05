@@ -10,6 +10,8 @@
     6. AssetStore 聚合 + inject_style
 """
 
+import pytest
+
 from boss_aigc.asset import (
     AssetStore,
     BrandStyleStore,
@@ -72,7 +74,10 @@ def test_inject_style_lock() -> None:
     params2 = {"style": ["极简"]}
     out2 = inject_style_lock(params2, bs)
     _ok(out2["style"] == ["极简"], "params 已有 style 时不覆盖")
-    # 空风格库时不注入
+    # 空风格库时不注入（先清理 DB 中的品牌风格）
+    from boss_aigc.db import get_conn
+    with get_conn() as conn:
+        conn.execute("DELETE FROM brand_styles")
     bs_empty = BrandStyleStore()
     out3 = inject_style_lock({"quantity": 1}, bs_empty)
     _ok("style" not in out3, "无品牌风格时不注入")

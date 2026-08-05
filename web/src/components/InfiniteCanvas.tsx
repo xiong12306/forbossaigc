@@ -86,10 +86,8 @@ const MIN_NODE_W = 180;
 const MIN_NODE_H = 120;
 
 const MODELS = [
-  { id: "modelscope", name: "Qwen-Image", desc: "通义万相" },
-  { id: "nanobanana", name: "Nano Banana Pro", desc: "专业电商" },
-  { id: "seedream", name: "Seedream 5.0 Pro", desc: "豆包" },
-  { id: "midjourney", name: "Midjourney-v8.2", desc: "艺术创意" },
+  { id: "modelscope", name: "Qwen-Image", desc: "通义万相", supported: true },
+  { id: "nanobanana", name: "Nano Banana Pro", desc: "专业电商", supported: true },
 ];
 
 const SIZES = [
