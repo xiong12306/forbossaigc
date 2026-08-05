@@ -148,6 +148,21 @@ CREATE TABLE IF NOT EXISTS brand_styles (
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
 );
+
+-- 无限画布（支持多画布，节点JSON存储）
+CREATE TABLE IF NOT EXISTS canvases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    canvas_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL DEFAULT '未命名画布',
+    owner TEXT NOT NULL DEFAULT 'boss',
+    nodes_json TEXT NOT NULL DEFAULT '[]',   -- JSON array: 所有节点
+    connections_json TEXT NOT NULL DEFAULT '[]', -- JSON array: 所有连线
+    thumbnail_url TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_canvases_owner ON canvases(owner);
+CREATE INDEX IF NOT EXISTS idx_canvases_updated ON canvases(updated_at DESC);
 """
 
 

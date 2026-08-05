@@ -20,8 +20,15 @@ import {
   MousePointer2,
   Hand,
   AlertCircle,
+  Save,
+  FolderOpen,
+  Trash2,
+  MoreHorizontal,
+  Edit3,
+  CheckCheck,
+  LayoutTemplate,
 } from "lucide-react";
-import { uploadImage, canvasGenerate } from "@/api";
+import { uploadImage, canvasGenerate, listCanvases, saveCanvas, loadCanvas, deleteCanvas, createNewCanvas, type CanvasInfo } from "@/api";
 
 export type CanvasNodeType = "text" | "image" | "generated" | "sticky" | "generator";
 
@@ -165,6 +172,18 @@ export default function InfiniteCanvas() {
   const [presetDropdownPos, setPresetDropdownPos] = useState<DropdownPosition>({ x: 0, y: 0 });
   const [toolMode, setToolMode] = useState<"select" | "pan">("select");
 
+  // 画布持久化状态
+  const [currentCanvasId, setCurrentCanvasId] = useState<string | null>(null);
+  const [canvasName, setCanvasName] = useState("未命名画布");
+  const [canvasList, setCanvasList] = useState<CanvasInfo[]>([]);
+  const [canvasListOpen, setCanvasListOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialLoadRef = useRef(false);
+
   // @ 提及状态 —— 每个generator独立
   const [mentionState, setMentionState] = useState<{ generatorId: string; startPos: number; query: string; pos: { x: number; y: number } } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -176,6 +195,168 @@ export default function InfiniteCanvas() {
   const promptTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
 
   const selectedNode = nodes.find(n => n.id === selectedNodeId) || null;
+
+  // ========== 画布持久化逻辑 ==========
+  const refreshCanvasList = useCallback(async () => {
+    try {
+      const list = await listCanvases();
+      setCanvasList(list);
+      return list;
+    } catch (e) {
+      console.error("加载画布列表失败", e);
+      return [];
+    }
+  }, []);
+
+  const doSave = useCallback(async (showStatus = true) => {
+    if (showStatus) setIsSaving(true);
+    setSaveStatus("saving");
+    try {
+      const res = await saveCanvas({
+        canvas_id: currentCanvasId || undefined,
+        name: canvasName,
+        nodes,
+        connections,
+      });
+      if (!currentCanvasId) {
+        setCurrentCanvasId(res.canvas_id);
+      }
+      setCanvasName(res.name);
+      setSaveStatus("saved");
+      void refreshCanvasList();
+      setTimeout(() => setSaveStatus("idle"), 1500);
+    } catch (e) {
+      console.error("保存画布失败", e);
+      setSaveStatus("error");
+      setTimeout(() => setSaveStatus("idle"), 2000);
+    } finally {
+      if (showStatus) setIsSaving(false);
+    }
+  }, [currentCanvasId, canvasName, nodes, connections, refreshCanvasList]);
+
+  // 自动保存：节点/连线变化后2秒自动保存
+  useEffect(() => {
+    if (!initialLoadRef.current) return;
+    if (nodes.length === 0 && !currentCanvasId) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      void doSave(false);
+    }, 2000);
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [nodes, connections, canvasName, doSave, currentCanvasId]);
+
+  // 初始化：加载最近的画布
+  useEffect(() => {
+    if (initialLoadRef.current) return;
+    initialLoadRef.current = true;
+    void (async () => {
+      const list = await refreshCanvasList();
+      // 如果有保存过的画布，加载最近的一个
+      if (list.length > 0) {
+        const latest = list[0];
+        try {
+          const detail = await loadCanvas(latest.canvas_id);
+          setNodes(detail.nodes || []);
+          setConnections(detail.connections || []);
+          setCurrentCanvasId(detail.canvas_id);
+          setCanvasName(detail.name);
+        } catch (e) {
+          console.error("加载最近画布失败", e);
+        }
+      }
+    })();
+  }, [refreshCanvasList]);
+
+  const handleLoadCanvas = useCallback(async (canvasId: string) => {
+    try {
+      const detail = await loadCanvas(canvasId);
+      setNodes(detail.nodes || []);
+      setConnections(detail.connections || []);
+      setCurrentCanvasId(detail.canvas_id);
+      setCanvasName(detail.name);
+      setCanvasListOpen(false);
+      setSelectedNodeId(null);
+      closeAllDropdowns();
+      resetView();
+    } catch (e) {
+      console.error("加载画布失败", e);
+      alert(e instanceof Error ? e.message : "加载失败");
+    }
+  }, [closeAllDropdowns, resetView]);
+
+  const handleNewCanvas = useCallback(async () => {
+    if (nodes.length > 0 && !confirm("新建画布将清空当前内容，是否保存当前画布？")) {
+      // 不保存直接清空
+      setNodes([]);
+      setConnections([]);
+      setCurrentCanvasId(null);
+      setCanvasName("未命名画布");
+      setCanvasListOpen(false);
+      resetView();
+      return;
+    }
+    if (nodes.length > 0) {
+      await doSave(true);
+    }
+    setNodes([]);
+    setConnections([]);
+    setCurrentCanvasId(null);
+    setCanvasName("未命名画布");
+    setCanvasListOpen(false);
+    setSelectedNodeId(null);
+    resetView();
+  }, [nodes.length, doSave, resetView]);
+
+  const handleDeleteCanvas = useCallback(async (canvasId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("确定要删除这个画布吗？此操作不可恢复。")) return;
+    try {
+      await deleteCanvas(canvasId);
+      if (currentCanvasId === canvasId) {
+        setNodes([]);
+        setConnections([]);
+        setCurrentCanvasId(null);
+        setCanvasName("未命名画布");
+      }
+      void refreshCanvasList();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "删除失败");
+    }
+  }, [currentCanvasId, refreshCanvasList]);
+
+  const handleRename = useCallback((canvas: CanvasInfo, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRenamingId(canvas.canvas_id);
+    setRenameValue(canvas.name);
+  }, []);
+
+  const confirmRename = useCallback(async () => {
+    if (!renamingId) return;
+    const newName = renameValue.trim() || "未命名画布";
+    try {
+      // 如果是当前画布，更新名字并保存
+      if (currentCanvasId === renamingId) {
+        setCanvasName(newName);
+      } else {
+        // 加载该画布改名字再保存（简单做法）
+        const detail = await loadCanvas(renamingId);
+        await saveCanvas({
+          canvas_id: renamingId,
+          name: newName,
+          nodes: detail.nodes,
+          connections: detail.connections,
+        });
+      }
+      setRenamingId(null);
+      setRenameValue("");
+      void refreshCanvasList();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "重命名失败");
+      setRenamingId(null);
+    }
+  }, [renamingId, renameValue, currentCanvasId, refreshCanvasList]);
 
   // 缓存：nodeId → 上游节点列表
   const upstreamMap = useMemo(() => {
@@ -610,10 +791,13 @@ export default function InfiniteCanvas() {
       .map(n => n.imageUrl!)
       .filter(Boolean);
 
+    // 清理prompt中的@引用标记（@xxx 替换为空，避免传给模型）
+    const cleanPrompt = (node.content || "").replace(/@\S+/g, "").replace(/\s+/g, " ").trim();
+
     updateNode(nodeId, { generating: true, error: undefined });
     try {
       const res = await canvasGenerate({
-        prompt: node.content,
+        prompt: cleanPrompt,
         reference_texts: referenceTexts,
         reference_images: referenceImages,
         model: node.model,
@@ -1003,6 +1187,46 @@ export default function InfiniteCanvas() {
     <div className="flex-1 relative overflow-hidden bg-slate-100">
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
 
+      {/* 左上角画布标题+保存状态 */}
+      <div className="absolute top-3 left-3 z-20 flex items-center gap-2 bg-white/95 backdrop-blur border border-slate-200 rounded-xl px-3 py-2 shadow-lg shadow-slate-400/15">
+        <LayoutTemplate className="w-4 h-4 text-blue-500 flex-shrink-0" />
+        <input
+          type="text"
+          value={canvasName}
+          onChange={(e) => setCanvasName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+          className="bg-transparent text-sm font-medium text-slate-700 outline-none w-[120px] focus:w-[180px] transition-all"
+          title="双击重命名画布"
+        />
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => void doSave(true)}
+            disabled={isSaving || saveStatus === "saving"}
+            className={`w-7 h-7 rounded-lg flex items-center justify-center transition ${saveStatus === "saved" ? "bg-green-100 text-green-600" : saveStatus === "error" ? "bg-red-100 text-red-600" : "text-slate-500 hover:bg-slate-100"}`}
+            title={saveStatus === "saved" ? "已保存" : "保存画布"}
+          >
+            {isSaving || saveStatus === "saving" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
+             saveStatus === "saved" ? <CheckCheck className="w-3.5 h-3.5" /> :
+             saveStatus === "error" ? <AlertCircle className="w-3.5 h-3.5" /> :
+             <Save className="w-3.5 h-3.5" />}
+          </button>
+          <button
+            onClick={() => setCanvasListOpen(true)}
+            className="w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-500 hover:text-blue-600 transition"
+            title="画布列表"
+          >
+            <FolderOpen className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => void handleNewCanvas()}
+            className="w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-500 hover:text-blue-600 transition"
+            title="新建画布"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
       {/* 顶部工具栏 */}
       <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 bg-white/95 backdrop-blur border border-slate-200 rounded-2xl px-2 py-1.5 shadow-lg shadow-slate-400/15">
         <button
@@ -1258,6 +1482,162 @@ export default function InfiniteCanvas() {
                   <StickyNote className="w-4 h-4 text-amber-500" /> 便签节点
                 </button>
               </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* 画布列表侧边栏 */}
+          <AnimatePresence>
+            {canvasListOpen && (
+              <>
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40"
+                  onClick={() => setCanvasListOpen(false)}
+                />
+                <motion.div
+                  initial={{ x: -320, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: -320, opacity: 0 }}
+                  transition={{ duration: 0.25, ease: "easeOut" }}
+                  className="fixed left-0 top-0 bottom-0 w-[320px] bg-white shadow-2xl z-50 flex flex-col"
+                >
+                  <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-800">我的画布</h2>
+                      <p className="text-xs text-slate-500 mt-0.5">共 {canvasList.length} 个画布</p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => { void handleNewCanvas(); }}
+                        className="p-2 rounded-lg hover:bg-blue-50 text-blue-600 transition"
+                        title="新建画布"
+                      >
+                        <Plus className="w-5 h-5" />
+                      </button>
+                      <button
+                        onClick={() => { void refreshCanvasList(); }}
+                        className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 transition"
+                        title="刷新"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => setCanvasListOpen(false)}
+                        className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 transition"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-3">
+                    {canvasList.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-full text-slate-400 py-16">
+                        <LayoutTemplate className="w-16 h-16 mb-3 opacity-30" />
+                        <p className="text-sm">暂无保存的画布</p>
+                        <p className="text-xs mt-1">点击 + 创建你的第一个画布</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {canvasList.map((canvas) => {
+                          const isActive = canvas.canvas_id === currentCanvasId;
+                          const isRenaming = renamingId === canvas.canvas_id;
+                          const updatedDate = new Date(canvas.updated_at);
+                          const timeStr = updatedDate.toLocaleString('zh-CN', {
+                            month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+                          });
+                          return (
+                            <div
+                              key={canvas.canvas_id}
+                              onClick={() => { if (!isRenaming) void handleLoadCanvas(canvas.canvas_id); }}
+                              className={`group relative rounded-xl border-2 p-3 cursor-pointer transition ${
+                                isActive
+                                  ? "border-blue-400 bg-blue-50/50 shadow-md shadow-blue-200/30"
+                                  : "border-slate-200 hover:border-blue-300 hover:bg-slate-50"
+                              }`}
+                            >
+                              {isRenaming ? (
+                                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                  <input
+                                    type="text"
+                                    value={renameValue}
+                                    onChange={(e) => setRenameValue(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") void confirmRename();
+                                      if (e.key === "Escape") { setRenamingId(null); setRenameValue(""); }
+                                    }}
+                                    autoFocus
+                                    className="flex-1 px-2 py-1 text-sm border border-blue-400 rounded-md outline-none bg-white"
+                                  />
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); void confirmRename(); }}
+                                    className="p-1.5 rounded-md bg-blue-500 text-white hover:bg-blue-600 transition"
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setRenamingId(null); setRenameValue(""); }}
+                                    className="p-1.5 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 transition"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="flex items-start gap-3">
+                                    {canvas.thumbnail_url ? (
+                                      <img
+                                        src={canvas.thumbnail_url}
+                                        alt=""
+                                        className="w-14 h-14 rounded-lg object-cover border border-slate-200 flex-shrink-0"
+                                      />
+                                    ) : (
+                                      <div className="w-14 h-14 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center flex-shrink-0">
+                                        <LayoutTemplate className="w-6 h-6 text-slate-400" />
+                                      </div>
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <h3 className="text-sm font-semibold text-slate-800 truncate">{canvas.name}</h3>
+                                        {isActive && (
+                                          <span className="px-1.5 py-0.5 rounded bg-blue-500 text-white text-[9px] font-medium">当前</span>
+                                        )}
+                                      </div>
+                                      <p className="text-[11px] text-slate-500 mt-0.5">
+                                        {canvas.node_count} 节点 · {canvas.connection_count} 连线
+                                      </p>
+                                      <p className="text-[10px] text-slate-400 mt-0.5">{timeStr}</p>
+                                    </div>
+                                  </div>
+                                  <div className="absolute top-2 right-2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition">
+                                    <button
+                                      onClick={(e) => handleRename(canvas, e)}
+                                      className="p-1.5 rounded-md hover:bg-white text-slate-500 hover:text-blue-600 transition"
+                                      title="重命名"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => void handleDeleteCanvas(canvas.canvas_id, e)}
+                                      className="p-1.5 rounded-md hover:bg-white text-slate-500 hover:text-red-600 transition"
+                                      title="删除"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              </>
             )}
           </AnimatePresence>
         </>,
