@@ -151,11 +151,13 @@ def _nanobanana_generate_sync(
     url = f"{api_base.rstrip('/')}/images"
     headers = {
         "authorization": f"Bearer {api_key}",
+        "accept": "application/json",
         "content-type": "application/json",
     }
     payload: dict[str, Any] = {
         "action": "generate",
         "prompt": prompt,
+        "model": "nano-banana-pro",  # Ace Data Cloud 要求显式指定模型
     }
     if ref_data_uris:
         payload["image_url"] = ref_data_uris[0]  # NanoBanana 单参考图
