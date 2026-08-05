@@ -352,77 +352,44 @@ class Pipeline:
         return ""
 
 
-# ---------- 占位处理器 ----------
-# 本阶段仅打通链路，后续 Task 3-8 填充真实逻辑。
+# ---------- 安全占位处理器 ----------
+# 直接实例化 Pipeline() 会使用这些占位处理器，仅用于链路冒烟测试。
+# 生产环境必须通过 build_full_pipeline() 注册真实处理器（server.py 已正确使用）。
+# 占位处理器抛出 RuntimeError，避免误用导致"静默成功"的假象。
 
 def _placeholder_access(upstream: Any, context: SessionContext) -> str:
-    """接入层占位：透传文本（真实实现含 ASR / 唤醒 / 卡片渲染）。"""
-    return upstream if isinstance(upstream, str) else str(upstream)
+    raise RuntimeError(
+        "access 层未注册真实处理器。请使用 build_full_pipeline() 构造 Pipeline，"
+        "或调用 pipeline.register_layer('access', build_access_handler(...))。"
+    )
 
 
 def _placeholder_understanding(upstream: Any, context: SessionContext) -> TaskIntent:
-    """理解层占位：构造一个最小意图，后续 Task 4 接 LLM。"""
-    intent = TaskIntent(
-        intent_id=uuid.uuid4().hex[:12],
-        task_type=TaskType.IMAGE_GEN,
-        product="占位商品",
-        raw_text=str(upstream),
-        confidence=0.5,
+    raise RuntimeError(
+        "understanding 层未注册真实处理器。请使用 build_full_pipeline() 构造 Pipeline，"
+        "或调用 pipeline.register_layer('understanding', build_understanding_handler(...))。"
     )
-    context.intent = intent
-    context.status = TaskStatus.AWAITING_CONFIRMATION
-    return intent
 
 
 def _placeholder_confirmation(upstream: Any, context: SessionContext) -> TaskSummary:
-    """确认层占位：生成摘要卡片，后续 Task 5 实现状态机与确认锁。"""
-    summary = TaskSummary(
-        summary_id=uuid.uuid4().hex[:12],
-        task_type=context.intent.task_type if context.intent else TaskType.IMAGE_GEN,
-        product=context.intent.product if context.intent else None,
-        params={"note": "占位参数"},
+    raise RuntimeError(
+        "confirmation 层未注册真实处理器。请使用 build_full_pipeline() 构造 Pipeline。"
     )
-    context.pending_summary = summary
-    # 占位：默认放行（真实实现需等老板确认，未确认前禁止进入执行层）
-    if context.intent is not None and summary is not None:
-        context.confirmed_task = ConfirmedTask(
-            task_id=uuid.uuid4().hex[:12],
-            intent=context.intent,
-            summary=summary,
-            confirmed_at=datetime.now(),
-        )
-    context.status = TaskStatus.CONFIRMED
-    return summary
 
 
 def _placeholder_orchestration(upstream: Any, context: SessionContext) -> TaskExecution:
-    """编排层占位：构造单步执行体，后续 Task 6 实现 DAG / 调度。"""
-    execution = TaskExecution(
-        execution_id=uuid.uuid4().hex[:12],
-        task_id=context.confirmed_task.task_id if context.confirmed_task else "",
+    raise RuntimeError(
+        "orchestration 层未注册真实处理器。请使用 build_full_pipeline() 构造 Pipeline。"
     )
-    context.execution = execution
-    context.status = TaskStatus.EXECUTING
-    return execution
 
 
 def _placeholder_execution(upstream: Any, context: SessionContext) -> TaskResult:
-    """执行层占位：返回空结果，后续 Task 2 接 MockAdapter 出真实占位产出。"""
-    result = TaskResult(
-        result_id=uuid.uuid4().hex[:12],
-        task_id=context.execution.task_id if context.execution else "",
+    raise RuntimeError(
+        "execution 层未注册真实处理器。请使用 build_full_pipeline() 构造 Pipeline。"
     )
-    context.result = result
-    context.status = TaskStatus.DELIVERED
-    return result
 
 
 def _placeholder_delivery(upstream: Any, context: SessionContext) -> Response:
-    """交付层占位：返回 Response，后续 Task 7 实现打包 / 多通道推送。"""
-    context.status = TaskStatus.ACCEPTED
-    return Response(
-        session_id=context.session_id,
-        status=context.status,
-        message="占位交付完成",
-        payload=context.result,
+    raise RuntimeError(
+        "delivery 层未注册真实处理器。请使用 build_full_pipeline() 构造 Pipeline。"
     )

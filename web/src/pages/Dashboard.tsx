@@ -141,8 +141,8 @@ export default function Dashboard() {
       setError(null);
       try {
         const [ov, trend, products, tasks] = await Promise.all([
-          dashboardApi.overview(),
-          dashboardApi.salesTrend(),
+          dashboardApi.overview(range),
+          dashboardApi.salesTrend(range),
           dashboardApi.topProducts(),
           dashboardApi.recentTasks(),
         ]);
@@ -162,7 +162,7 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [range]);
 
   const maxSales = Math.max(1, ...salesTrend.map((s) => s.gmv));
 

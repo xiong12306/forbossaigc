@@ -68,6 +68,12 @@ export default function Service() {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [faqs, setFaqs] = useState<FAQ[]>([]);
+  const [stats, setStats] = useState<{
+    pending: number;
+    resolved_today: number;
+    avg_response_min: number;
+    satisfaction: number;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [resolvingId, setResolvingId] = useState<number | null>(null);
 
@@ -80,18 +86,29 @@ export default function Service() {
     }
   };
 
+  const loadStats = async () => {
+    try {
+      const data = await serviceApi.stats();
+      setStats(data);
+    } catch (err) {
+      console.error("加载客服统计失败:", err);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const [msgs, fqs] = await Promise.all([
+        const [msgs, fqs, st] = await Promise.all([
           serviceApi.messages(),
           serviceApi.faq(),
+          serviceApi.stats(),
         ]);
         if (cancelled) return;
         setMessages(msgs ?? []);
         setFaqs(fqs ?? []);
+        setStats(st);
         if (msgs && msgs.length > 0) setActiveChat(msgs[0].id);
         if (fqs && fqs.length > 0) setOpenFaq(fqs[0].id);
       } catch (err) {
@@ -110,7 +127,7 @@ export default function Service() {
     setResolvingId(id);
     try {
       await serviceApi.resolveMessage(id);
-      await loadMessages();
+      await Promise.all([loadMessages(), loadStats()]);
     } catch (err) {
       console.error("标记已处理失败:", err);
     } finally {
@@ -118,35 +135,36 @@ export default function Service() {
     }
   };
 
-  // 顶部统计：今日消息数=消息总数，其余静态
-  const todayMsgCount = messages.length;
+  // 顶部统计：从后端真实数据计算
+  const pendingCount = stats?.pending ?? messages.length;
+  const resolvedToday = stats?.resolved_today ?? 0;
   const STATS = [
     {
       key: "msg",
-      label: "今日消息数",
-      value: String(todayMsgCount),
+      label: "待处理消息",
+      value: String(pendingCount),
       unit: "条",
       icon: MessageSquare,
       gradient: "from-gold-500 to-gold-300",
-      delta: "+12%",
+      delta: `已处理 ${resolvedToday} 条`,
     },
     {
       key: "resp",
       label: "平均响应时间",
-      value: "1.8",
+      value: stats ? String(stats.avg_response_min) : "—",
       unit: "分钟",
       icon: Clock,
       gradient: "from-terracotta-500 to-gold-400",
-      delta: "-15%",
+      delta: "实时统计",
     },
     {
       key: "satisfaction",
       label: "满意度",
-      value: "96",
+      value: stats ? String(stats.satisfaction) : "—",
       unit: "%",
       icon: Smile,
       gradient: "from-brown-700 to-gold-500",
-      delta: "+3%",
+      delta: "实时统计",
     },
   ] as const;
 

@@ -164,7 +164,7 @@ def test_misc_cancel_and_other_task_types() -> None:
     s, arts = video_adapter.poll(data_id)
     assert s == TaskStatus.DELIVERED
     assert len(arts) == 1 and arts[0].kind == "TEXT"
-    assert "Mock 数据" in arts[0].metadata.get("content", "")
+    assert "数据查询" in arts[0].metadata.get("content", "")
 
     # ---- IMAGE_EDIT → 1 张 IMAGE（忽略 quantity）----
     edit_id = video_adapter.submit({"task_type": TaskType.IMAGE_EDIT, "quantity": 5})

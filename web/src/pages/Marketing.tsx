@@ -150,6 +150,9 @@ export default function Marketing() {
 
   // 统计数据动态计算
   const activeCouponCount = coupons.filter((c) => c.status === "active").length;
+  const activeCampaignCount = campaigns.filter(
+    (c) => c.status === "active"
+  ).length;
   const upcomingCampaignCount = campaigns.filter(
     (c) => c.status === "upcoming"
   ).length;
@@ -157,7 +160,7 @@ export default function Marketing() {
   const TOOLS = [
     { ...TOOL_BASE[0], subtitle: `${activeCouponCount}个进行中` },
     { ...TOOL_BASE[1], subtitle: `${upcomingCampaignCount}个即将开始` },
-    { ...TOOL_BASE[2], subtitle: "5个活跃群" },
+    { ...TOOL_BASE[2], subtitle: `${activeCampaignCount}个活动推广中` },
   ];
 
   return (

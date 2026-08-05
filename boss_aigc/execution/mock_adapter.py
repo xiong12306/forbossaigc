@@ -217,15 +217,21 @@ class MockAdapter(PlatformAdapter):
             # 生视频：返回 1 个 VIDEO
             artifacts.append(self._make_media_artifact("VIDEO", state.task_id, 0))
         elif task_type == TaskType.COPYWRITING:
-            # 写文案：返回 1 个 TEXT
-            artifacts.append(self._make_text_artifact(
-                state.task_id, content=f"[Mock 文案] {state.params.get('product', '商品')} 卖点占位文案"
-            ))
+            # 写文案：使用本地文案生成器生成真实可用文案
+            from boss_aigc.execution.copywriter import generate_copywriting, resolve_copy_type
+            product = state.params.get("product", "商品")
+            copy_type = resolve_copy_type(state.params)
+            style = state.params.get("style", "")
+            extra = state.params.get("extra", "") or state.params.get("description", "")
+            content = generate_copywriting(
+                product=product, copy_type=copy_type, style=style, extra=extra
+            )
+            artifacts.append(self._make_text_artifact(state.task_id, content=content))
         elif task_type == TaskType.DATA_QUERY:
-            # 查数据：返回 1 个 TEXT（模拟数据）
-            artifacts.append(self._make_text_artifact(
-                state.task_id, content="[Mock 数据] 近 7 天任务统计：完成 12 / 失败 1 / 进行中 2"
-            ))
+            # 查数据：使用本地数据查询生成器
+            from boss_aigc.execution.copywriter import generate_data_query
+            content = generate_data_query(state.params)
+            artifacts.append(self._make_text_artifact(state.task_id, content=content))
         else:
             # 兜底：未知类型返回 1 张 IMAGE
             artifacts.append(self._make_media_artifact("IMAGE", state.task_id, 0))

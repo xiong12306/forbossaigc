@@ -111,6 +111,30 @@ CREATE TABLE IF NOT EXISTS finance_records (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- 任务历史（资产层持久化）
+CREATE TABLE IF NOT EXISTS task_history (
+    id BIGSERIAL PRIMARY KEY,
+    task_id TEXT NOT NULL UNIQUE,
+    task_type TEXT NOT NULL,
+    product TEXT DEFAULT '',
+    raw_text TEXT DEFAULT '',
+    summary_id TEXT DEFAULT '',
+    params JSONB DEFAULT '{}',
+    platform TEXT DEFAULT '',
+    result_artifacts_count INTEGER NOT NULL DEFAULT 0,
+    result_status TEXT DEFAULT '',
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 品牌风格（资产层持久化，单条全局风格）
+CREATE TABLE IF NOT EXISTS brand_styles (
+    id BIGSERIAL PRIMARY KEY,
+    style_id TEXT NOT NULL UNIQUE,
+    keywords JSONB DEFAULT '[]',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ========== 种子数据 ==========
 
 -- 商品
