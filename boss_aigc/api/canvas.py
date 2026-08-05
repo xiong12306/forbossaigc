@@ -8,14 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import logging
 import mimetypes
 import uuid
 from pathlib import Path
 from typing import Any
 
 import httpx
-import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -148,7 +146,7 @@ def _nanobanana_generate_sync(
     """同步调用 NanoBanana API，返回远程图片 URL。
 
     NanoBanana 通过 Ace Data Cloud 接入，POST /nano-banana/images 同步返回结果。
-    支持参考图（image_url 字段传 data URI）。
+    支持参考图（image_url 字段传 data URI）。使用 httpx.Client 替代 requests。
     """
     url = f"{api_base.rstrip('/')}/images"
     headers = {
@@ -162,9 +160,10 @@ def _nanobanana_generate_sync(
     if ref_data_uris:
         payload["image_url"] = ref_data_uris[0]  # NanoBanana 单参考图
 
-    resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
-    resp.raise_for_status()
-    result = resp.json()
+    with httpx.Client(trust_env=False, timeout=timeout) as client:
+        resp = client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+        result = resp.json()
 
     # 兼容多种响应格式提取图片 URL
     for key in ["url", "image_url", "image", "data", "images", "result", "output"]:
@@ -226,10 +225,10 @@ async def _generate_via_nanobanana(req: CanvasGenerateRequest, final_prompt: str
             )
         except HTTPException:
             raise
-        except requests.exceptions.Timeout as e:
+        except httpx.TimeoutException as e:
             last_err = e
             logger.warning("NanoBanana 超时（重试%d/3）", attempt + 1)
-        except requests.exceptions.RequestException as e:
+        except httpx.RequestError as e:
             last_err = e
             logger.warning("NanoBanana 请求失败（重试%d/3）: %s", attempt + 1, str(e)[:100])
         except Exception as e:
