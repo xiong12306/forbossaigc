@@ -46,8 +46,8 @@ services:
         condition: service_healthy
     networks:
       - boss-net
-    # 确保入口脚本可执行
-    entrypoint: ["/bin/sh", "-c", "chmod +x /docker-entrypoint.d/40-init-ssl.sh && /docker-entrypoint.sh"]
+    # 直接用 sh 执行 init.sh 后再启动 nginx（避免 chmod 只读文件系统失败）
+    entrypoint: ["/bin/sh", "-c", "sh /docker-entrypoint.d/40-init-ssl.sh && /docker-entrypoint.sh"]
 
   # Let's Encrypt 证书签发（手动运行）
   # docker compose run --rm certbot
