@@ -158,3 +158,73 @@ export async function canvasGenerate(req: CanvasGenerateRequest): Promise<Canvas
   }
   return (await res.json()) as CanvasGenerateResponse;
 }
+
+export interface CanvasInfo {
+  canvas_id: string;
+  name: string;
+  owner: string;
+  thumbnail_url: string;
+  created_at: string;
+  updated_at: string;
+  node_count: number;
+  connection_count: number;
+}
+
+export interface CanvasDetail extends CanvasInfo {
+  nodes: any[];
+  connections: any[];
+}
+
+export interface CanvasSaveRequest {
+  canvas_id?: string;
+  name: string;
+  nodes: any[];
+  connections: any[];
+}
+
+export async function listCanvases(): Promise<CanvasInfo[]> {
+  const res = await fetch(`${API_BASE}/api/canvas/list`, { headers: { ...authHeaders() } });
+  if (!res.ok) throw new Error(`获取画布列表失败 (${res.status})`);
+  return await res.json();
+}
+
+export async function saveCanvas(req: CanvasSaveRequest): Promise<CanvasDetail> {
+  const res = await fetch(`${API_BASE}/api/canvas/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    let errMsg = `保存失败 (${res.status})`;
+    try { const d = await res.json(); errMsg = d.detail || errMsg; } catch {}
+    throw new Error(errMsg);
+  }
+  return await res.json();
+}
+
+export async function loadCanvas(canvasId: string): Promise<CanvasDetail> {
+  const res = await fetch(`${API_BASE}/api/canvas/load/${canvasId}`, { headers: { ...authHeaders() } });
+  if (!res.ok) {
+    let errMsg = `加载失败 (${res.status})`;
+    try { const d = await res.json(); errMsg = d.detail || errMsg; } catch {}
+    throw new Error(errMsg);
+  }
+  return await res.json();
+}
+
+export async function deleteCanvas(canvasId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/canvas/${canvasId}`, {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) throw new Error(`删除失败 (${res.status})`);
+}
+
+export async function createNewCanvas(): Promise<{ canvas_id: string; name: string }> {
+  const res = await fetch(`${API_BASE}/api/canvas/new`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) throw new Error(`新建画布失败 (${res.status})`);
+  return await res.json();
+}

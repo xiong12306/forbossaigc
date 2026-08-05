@@ -10,14 +10,17 @@ import asyncio
 import base64
 import mimetypes
 import uuid
+import json
 from pathlib import Path
 from typing import Any
+from datetime import datetime
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from boss_aigc.config import get_settings
+from boss_aigc.db import get_conn
 from boss_aigc.logging_setup import get_logger
 
 logger = get_logger(__name__, layer="api")
@@ -255,7 +258,8 @@ async def _generate_via_modelscope(req: CanvasGenerateRequest, final_prompt: str
     is_edit = len(ref_data_uris) > 0
     model_name = "Qwen/Qwen-Image-Edit-2509" if is_edit else settings.modelscope_model
 
-    logger.info("ModelScope 画布生成: is_edit=%s refs=%d prompt=%s", is_edit, len(ref_data_uris), final_prompt[:100])
+    logger.info("ModelScope 画布生成: is_edit=%s refs=%d model=%s prompt=%s",
+                is_edit, len(ref_data_uris), model_name, final_prompt[:120])
 
     api_base = settings.modelscope_api_base.rstrip("/")
     api_key = settings.modelscope_api_key
@@ -263,11 +267,14 @@ async def _generate_via_modelscope(req: CanvasGenerateRequest, final_prompt: str
     body: dict[str, Any] = {
         "prompt": final_prompt,
         "size": ms_size,
-        "negative_prompt": _NEGATIVE_PROMPT,
         "model": model_name,
     }
+    # Qwen-Image-Edit 参考图参数：input.image 传单个图片URL或data URI
     if is_edit:
-        body["image_url"] = ref_data_uris
+        body["input"] = {"image": ref_data_uris[0]}
+        body["negative_prompt"] = _NEGATIVE_PROMPT
+    else:
+        body["negative_prompt"] = _NEGATIVE_PROMPT
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -276,12 +283,12 @@ async def _generate_via_modelscope(req: CanvasGenerateRequest, final_prompt: str
     }
 
     submit_timeout = httpx.Timeout(connect=15.0, read=180.0, write=180.0, pool=15.0)
-    poll_timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0)
+    poll_timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)
 
     async with httpx.AsyncClient(trust_env=False, http2=False) as client:
-        # 1. 提交任务（带重试）
+        # 1. 提交任务（带重试，包括429限流等待）
         resp = None
-        for attempt in range(3):
+        for attempt in range(5):
             try:
                 resp = await client.post(
                     f"{api_base}/images/generations",
@@ -289,17 +296,47 @@ async def _generate_via_modelscope(req: CanvasGenerateRequest, final_prompt: str
                     headers=headers,
                     timeout=submit_timeout,
                 )
+                if resp.status_code == 429:
+                    retry_after = int(resp.headers.get("Retry-After", "5"))
+                    wait_sec = min(retry_after, 15)
+                    logger.warning("ModelScope 限流429，等待%ds后重试（%d/5）", wait_sec, attempt + 1)
+                    await asyncio.sleep(wait_sec)
+                    continue
                 resp.raise_for_status()
                 break
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429 and attempt < 4:
+                    retry_after = int(e.response.headers.get("Retry-After", "5"))
+                    wait_sec = min(retry_after, 15)
+                    logger.warning("ModelScope 限流429，等待%ds后重试（%d/5）", wait_sec, attempt + 1)
+                    await asyncio.sleep(wait_sec)
+                    continue
+                raise
             except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as e:
-                logger.warning("提交失败（重试%d/3）: %s", attempt + 1, type(e).__name__)
-                if attempt == 2:
+                logger.warning("提交失败（重试%d/5）: %s", attempt + 1, type(e).__name__)
+                if attempt == 4:
                     raise HTTPException(status_code=502, detail=f"ModelScope 提交失败: {e}")
                 await asyncio.sleep(2)
+
+        if resp is None:
+            raise HTTPException(status_code=502, detail="ModelScope 提交失败：无响应")
 
         submit_data = resp.json()
         ms_task_id = submit_data.get("task_id")
         if not ms_task_id:
+            # 同步返回（部分模型可能同步返回结果）
+            images = submit_data.get("images") or submit_data.get("output_images") or []
+            if images:
+                remote_url = images[0] if isinstance(images[0], str) else images[0].get("url", "")
+                if remote_url:
+                    try:
+                        local_url = await _download_image(client, remote_url)
+                    except Exception as e:
+                        logger.warning("下载失败，使用原始 URL: %s", e)
+                        local_url = remote_url
+                    return CanvasGenerateResponse(
+                        image_url=local_url, prompt_used=final_prompt, model_used="modelscope"
+                    )
             raise HTTPException(status_code=502, detail=f"未返回 task_id: {str(submit_data)[:200]}")
 
         logger.info("任务已提交: ms_task_id=%s", ms_task_id)
@@ -318,6 +355,9 @@ async def _generate_via_modelscope(req: CanvasGenerateRequest, final_prompt: str
         while True:
             try:
                 r = await client.get(poll_url, headers=poll_headers, timeout=poll_timeout)
+                if r.status_code == 429:
+                    await asyncio.sleep(5)
+                    continue
                 r.raise_for_status()
                 data = r.json()
                 consecutive_failures = 0
@@ -345,7 +385,7 @@ async def _generate_via_modelscope(req: CanvasGenerateRequest, final_prompt: str
                 if not images:
                     raise HTTPException(status_code=500, detail=f"SUCCEED 但未找到图片: {str(data)[:200]}")
 
-                remote_url = images[0]
+                remote_url = images[0] if isinstance(images[0], str) else (images[0].get("url") or images[0].get("image_url", ""))
                 try:
                     local_url = await _download_image(client, remote_url)
                 except Exception as e:
@@ -381,12 +421,171 @@ async def _generate_via_modelscope(req: CanvasGenerateRequest, final_prompt: str
 
 @router.post("/generate", response_model=CanvasGenerateResponse)
 async def canvas_generate(req: CanvasGenerateRequest) -> CanvasGenerateResponse:
-    """画布异步生成图片，按 model 参数分发到 ModelScope / NanoBanana。"""
+    """画布异步生成图片，按 model 参数分发到 ModelScope / NanoBanana。
+    ModelScope 失败时自动降级到 NanoBanana（如果配置了key且用户没强制选nanobanana）。
+    """
     final_prompt = _build_final_prompt(req)
     ref_data_uris = _resolve_ref_images(req)
 
     model = (req.model or "modelscope").lower()
+    settings = get_settings()
 
+    # 用户指定模型优先
     if model == "nanobanana":
         return await _generate_via_nanobanana(req, final_prompt, ref_data_uris)
-    return await _generate_via_modelscope(req, final_prompt, ref_data_uris)
+
+    # 默认走 ModelScope，失败降级到 NanoBanana
+    try:
+        return await _generate_via_modelscope(req, final_prompt, ref_data_uris)
+    except HTTPException as e:
+        # 429/502/503 等服务不可用时降级
+        if settings.nanobanana_api_key and e.status_code in (429, 502, 503, 504):
+            logger.warning("ModelScope 不可用（%d），降级到 NanoBanana", e.status_code)
+            return await _generate_via_nanobanana(req, final_prompt, ref_data_uris)
+        raise
+
+
+# ============ 画布持久化 API ============
+
+def _now() -> str:
+    return datetime.now().isoformat()
+
+
+class CanvasSaveRequest(BaseModel):
+    canvas_id: str | None = None
+    name: str = "未命名画布"
+    nodes: list[dict[str, Any]] = []
+    connections: list[dict[str, Any]] = []
+
+
+class CanvasInfo(BaseModel):
+    canvas_id: str
+    name: str
+    owner: str
+    thumbnail_url: str
+    created_at: str
+    updated_at: str
+    node_count: int
+    connection_count: int
+
+
+class CanvasDetail(CanvasInfo):
+    nodes: list[dict[str, Any]]
+    connections: list[dict[str, Any]]
+
+
+@router.get("/list", response_model=list[CanvasInfo])
+async def list_canvases(owner: str = Query("boss")):
+    """获取用户的所有画布列表（按更新时间倒序）。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT canvas_id, name, owner, thumbnail_url, created_at, updated_at, "
+            "nodes_json, connections_json FROM canvases WHERE owner = ? ORDER BY updated_at DESC LIMIT 50",
+            (owner,)
+        ).fetchall()
+    result = []
+    for r in rows:
+        try:
+            nodes = json.loads(r["nodes_json"])
+            conns = json.loads(r["connections_json"])
+        except (json.JSONDecodeError, TypeError):
+            nodes, conns = [], []
+        result.append(CanvasInfo(
+            canvas_id=r["canvas_id"], name=r["name"], owner=r["owner"],
+            thumbnail_url=r["thumbnail_url"] or "",
+            created_at=r["created_at"], updated_at=r["updated_at"],
+            node_count=len(nodes), connection_count=len(conns),
+        ))
+    return result
+
+
+@router.post("/save", response_model=CanvasDetail)
+async def save_canvas(req: CanvasSaveRequest, owner: str = Query("boss")):
+    """保存画布节点和连线到数据库。canvas_id 为空则新建。"""
+    now = _now()
+    canvas_id = req.canvas_id or f"canvas-{uuid.uuid4().hex[:12]}"
+    nodes_json = json.dumps(req.nodes, ensure_ascii=False, default=str)
+    connections_json = json.dumps(req.connections, ensure_ascii=False, default=str)
+
+    # 尝试找第一个图片节点作为缩略图
+    thumbnail = ""
+    for n in req.nodes:
+        if n.get("imageUrl"):
+            thumbnail = n["imageUrl"]
+            break
+
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT id FROM canvases WHERE canvas_id = ? AND owner = ?",
+            (canvas_id, owner)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE canvases SET name=?, nodes_json=?, connections_json=?, thumbnail_url=?, updated_at=? "
+                "WHERE canvas_id=? AND owner=?",
+                (req.name, nodes_json, connections_json, thumbnail, now, canvas_id, owner)
+            )
+        else:
+            conn.execute(
+                "INSERT INTO canvases (canvas_id, name, owner, nodes_json, connections_json, thumbnail_url, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (canvas_id, req.name, owner, nodes_json, connections_json, thumbnail, now, now)
+            )
+
+    return CanvasDetail(
+        canvas_id=canvas_id, name=req.name, owner=owner,
+        thumbnail_url=thumbnail, created_at=now, updated_at=now,
+        node_count=len(req.nodes), connection_count=len(req.connections),
+        nodes=req.nodes, connections=req.connections,
+    )
+
+
+@router.get("/load/{canvas_id}", response_model=CanvasDetail)
+async def load_canvas(canvas_id: str, owner: str = Query("boss")):
+    """加载单个画布的完整数据（节点+连线）。"""
+    with get_conn() as conn:
+        r = conn.execute(
+            "SELECT * FROM canvases WHERE canvas_id = ? AND owner = ?",
+            (canvas_id, owner)
+        ).fetchone()
+    if not r:
+        raise HTTPException(status_code=404, detail=f"画布不存在: {canvas_id}")
+    try:
+        nodes = json.loads(r["nodes_json"])
+        conns = json.loads(r["connections_json"])
+    except (json.JSONDecodeError, TypeError):
+        nodes, conns = [], []
+    return CanvasDetail(
+        canvas_id=r["canvas_id"], name=r["name"], owner=r["owner"],
+        thumbnail_url=r["thumbnail_url"] or "",
+        created_at=r["created_at"], updated_at=r["updated_at"],
+        node_count=len(nodes), connection_count=len(conns),
+        nodes=nodes, connections=conns,
+    )
+
+
+@router.delete("/{canvas_id}")
+async def delete_canvas(canvas_id: str, owner: str = Query("boss")):
+    """删除画布。"""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM canvases WHERE canvas_id = ? AND owner = ?",
+            (canvas_id, owner)
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"画布不存在: {canvas_id}")
+    return {"ok": True, "deleted": canvas_id}
+
+
+@router.post("/new")
+async def create_new_canvas(owner: str = Query("boss")):
+    """创建一个空的新画布，返回canvas_id。"""
+    canvas_id = f"canvas-{uuid.uuid4().hex[:12]}"
+    now = _now()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO canvases (canvas_id, name, owner, nodes_json, connections_json, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (canvas_id, "未命名画布", owner, "[]", "[]", now, now)
+        )
+    return {"canvas_id": canvas_id, "name": "未命名画布"}
