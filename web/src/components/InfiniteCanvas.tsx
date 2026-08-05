@@ -190,21 +190,18 @@ export default function InfiniteCanvas() {
     return map;
   }, [connections, nodes]);
 
-  // @ 提及候选：画布上所有可用节点（排除自身和已引用的）
+  // @ 提及候选：画布上所有非自身节点（不排除已连线的——连线是传参考图，@是prompt文本引用，两者独立）
   const mentionCandidates = useMemo(() => {
     if (!mentionState) return [];
-    const refs = upstreamMap[mentionState.generatorId] || [];
-    const mentionedIds = refs.map(r => r.id);
     return nodes.filter(n =>
       n.id !== mentionState.generatorId &&
-      !mentionedIds.includes(n.id) &&
       (n.type === "image" || n.type === "generated" || n.type === "text" || n.type === "sticky")
     ).filter(n => {
       if (!mentionState.query) return true;
       const q = mentionState.query.toLowerCase();
-      return n.title.toLowerCase().includes(q) || n.content.toLowerCase().includes(q);
+      return (n.title || "").toLowerCase().includes(q) || (n.content || "").toLowerCase().includes(q);
     });
-  }, [mentionState, nodes, upstreamMap]);
+  }, [mentionState, nodes]);
 
   // 精确计算 @ 菜单位置：基于 textarea 光标位置
   const computeMentionPosition = useCallback((textarea: HTMLTextAreaElement, caretPos: number): { x: number; y: number } => {
@@ -321,10 +318,10 @@ export default function InfiniteCanvas() {
     try {
       const url = await uploadImage(file);
       const img = new Image();
-      const finish = (w: number, h: number) => {
+      const finish = (w: number, h: number, displayName?: string) => {
         const node: CanvasNode = {
           id: genId("img"), type: "image", x: pos.x, y: pos.y,
-          width: w, height: h + TITLE_HEIGHT, content: file.name || "参考图片", imageUrl: url, title: "图片",
+          width: w, height: h + TITLE_HEIGHT, content: file.name || "参考图片", imageUrl: url, title: displayName || "图片",
         };
         setNodes(prev => [...prev, node]);
         setSelectedNodeId(node.id);
@@ -333,9 +330,10 @@ export default function InfiniteCanvas() {
         const maxW = 280;
         const ratio = img.width / img.height || 1;
         const w = Math.min(maxW, img.width || maxW);
-        finish(w, w / ratio);
+        const baseName = (file.name || "参考图片").replace(/\.[^.]+$/, "").slice(0, 20) || "参考图片";
+        finish(w, w / ratio, baseName);
       };
-      img.onerror = () => finish(240, 200);
+      img.onerror = () => finish(240, 200, (file.name || "参考图片").replace(/\.[^.]+$/, "").slice(0, 20) || "参考图片");
       img.src = url;
     } catch (err) {
       console.error("上传失败", err);
@@ -623,11 +621,13 @@ export default function InfiniteCanvas() {
         preset: node.preset,
       });
       if (res.image_url) {
+        // 用prompt前15字作为标题，方便@引用时识别
+        const genTitle = (node.content || "AI生成").replace(/@\S+/g, "").trim().slice(0, 15) || "AI生成";
         updateNode(nodeId, {
           imageUrl: res.image_url,
           type: "generated",
           generating: false,
-          title: "AI 生成",
+          title: genTitle,
           error: undefined,
         });
       } else {
