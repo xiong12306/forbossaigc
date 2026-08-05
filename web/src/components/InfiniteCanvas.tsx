@@ -183,6 +183,9 @@ export default function InfiniteCanvas() {
   const [renameValue, setRenameValue] = useState("");
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialLoadRef = useRef(false);
+  // 持有后声明的函数引用，避免useCallback依赖数组TDZ错误
+  const closeAllDropdownsRef = useRef<() => void>(() => {});
+  const resetViewRef = useRef<() => void>(() => {});
 
   // @ 提及状态 —— 每个generator独立
   const [mentionState, setMentionState] = useState<{ generatorId: string; startPos: number; query: string; pos: { x: number; y: number } } | null>(null);
@@ -278,13 +281,13 @@ export default function InfiniteCanvas() {
       setCanvasName(detail.name);
       setCanvasListOpen(false);
       setSelectedNodeId(null);
-      closeAllDropdowns();
-      resetView();
+      closeAllDropdownsRef.current();
+      resetViewRef.current();
     } catch (e) {
       console.error("加载画布失败", e);
       alert(e instanceof Error ? e.message : "加载失败");
     }
-  }, [closeAllDropdowns, resetView]);
+  }, []);
 
   const handleNewCanvas = useCallback(async () => {
     if (nodes.length > 0 && !confirm("新建画布将清空当前内容，是否保存当前画布？")) {
@@ -294,7 +297,7 @@ export default function InfiniteCanvas() {
       setCurrentCanvasId(null);
       setCanvasName("未命名画布");
       setCanvasListOpen(false);
-      resetView();
+      resetViewRef.current();
       return;
     }
     if (nodes.length > 0) {
@@ -306,8 +309,8 @@ export default function InfiniteCanvas() {
     setCanvasName("未命名画布");
     setCanvasListOpen(false);
     setSelectedNodeId(null);
-    resetView();
-  }, [nodes.length, doSave, resetView]);
+    resetViewRef.current();
+  }, [nodes.length, doSave]);
 
   const handleDeleteCanvas = useCallback(async (canvasId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -465,6 +468,7 @@ export default function InfiniteCanvas() {
     setSizeDropdownOpen(null);
     setPresetDropdownOpen(null);
   }, []);
+  closeAllDropdownsRef.current = closeAllDropdowns;
 
   const createNode = useCallback((type: CanvasNodeType, pos: Point) => {
     let node: CanvasNode;
@@ -718,6 +722,7 @@ export default function InfiniteCanvas() {
     setScale(1);
     setOffset({ x: 60, y: 60 });
   }, []);
+  resetViewRef.current = resetView;
 
   const startConnection = useCallback((e: React.MouseEvent, node: CanvasNode) => {
     e.stopPropagation();
