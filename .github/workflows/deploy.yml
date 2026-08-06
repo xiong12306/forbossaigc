@@ -78,6 +78,22 @@ jobs:
               echo "DOMAIN=xjloveqrj.pw" >> .env
             fi
 
+            # 同步 SILICONFLOW_API_KEY（从 GitHub Secrets 安全注入，不落盘仓库）
+            if [ -n "${{ secrets.SILICONFLOW_API_KEY }}" ]; then
+              if grep -q "^SILICONFLOW_API_KEY=" .env; then
+                sed -i "s|^SILICONFLOW_API_KEY=.*|SILICONFLOW_API_KEY=${{ secrets.SILICONFLOW_API_KEY }}|" .env
+              else
+                echo "SILICONFLOW_API_KEY=${{ secrets.SILICONFLOW_API_KEY }}" >> .env
+              fi
+              # 默认切到 siliconflow（免实名可用，FLUX 需实名后改 SILICONFLOW_MODEL）
+              if ! grep -q "^PLATFORM_PROVIDER=" .env; then
+                echo "PLATFORM_PROVIDER=siliconflow" >> .env
+              fi
+              echo "✅ SILICONFLOW_API_KEY 已同步"
+            else
+              echo "⚠️  未配置 SILICONFLOW_API_KEY Secret，画布/文案功能将不可用"
+            fi
+
             # 记录当前镜像 ID（用于回滚）
             OLD_IMAGE_ID=$(docker compose images app 2>/dev/null | grep app | awk '{print $3}' || echo "")
             echo "📦 旧镜像: ${OLD_IMAGE_ID:-无}"
