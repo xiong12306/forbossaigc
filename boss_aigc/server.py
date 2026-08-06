@@ -33,7 +33,7 @@ from boss_aigc.auth import (
 from boss_aigc.contracts.enums import TaskStatus
 from boss_aigc.pipeline import Pipeline, Response, SessionContext
 from boss_aigc.db import init_db
-from boss_aigc.api import dashboard, products, assets, marketing, service, finance, canvas
+from boss_aigc.api import dashboard, products, assets, marketing, service, finance, canvas, copywriting
 
 app = FastAPI(title="BossAIGC 老板 AI 助手 API", version="0.3.0")
 
@@ -83,6 +83,7 @@ _AUTH_WHITELIST = {
     "/api/reset",
     "/api/gallery",
     "/api/canvas/generate",
+    "/api/copywriting/generate",
     "/metrics",
     "/",
     "/docs",
@@ -384,6 +385,7 @@ app.include_router(marketing.router)
 app.include_router(service.router)
 app.include_router(finance.router)
 app.include_router(canvas.router)
+app.include_router(copywriting.router)
 
 
 # ---------- 前端静态文件托管（生产模式）----------

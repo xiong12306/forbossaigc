@@ -228,3 +228,57 @@ export async function createNewCanvas(): Promise<{ canvas_id: string; name: stri
   if (!res.ok) throw new Error(`新建画布失败 (${res.status})`);
   return await res.json();
 }
+
+// ============ 文案生成 ============
+
+export interface CopywritingGenerateRequest {
+  product: string;
+  copy_type?: string;   // title | selling | xhs | script
+  style?: string;
+  extra?: string;
+  temperature?: number;
+}
+
+export interface CopywritingGenerateResponse {
+  content: string;
+  model_used: string;
+  copy_type: string;
+  style: string;
+}
+
+export async function generateCopywriting(req: CopywritingGenerateRequest): Promise<CopywritingGenerateResponse> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/copywriting/generate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify(req),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    clearTimeout(timeoutId);
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new Error("文案生成超时，请稍后重试。");
+    }
+    throw new Error("无法连接到服务，请确认网络是否正常。");
+  }
+  clearTimeout(timeoutId);
+  if (res.status === 401) {
+    window.location.href = "/login";
+    throw new Error("登录已过期，请重新登录");
+  }
+  if (!res.ok) {
+    let errMsg = `生成失败 (${res.status})`;
+    try {
+      const errData = await res.json();
+      errMsg = errData.detail || errMsg;
+    } catch {}
+    throw new Error(errMsg);
+  }
+  return (await res.json()) as CopywritingGenerateResponse;
+}

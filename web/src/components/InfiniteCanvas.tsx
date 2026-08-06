@@ -95,6 +95,7 @@ const MIN_NODE_W = 180;
 const MIN_NODE_H = 120;
 
 const MODELS = [
+  { id: "siliconflow", name: "FLUX / Qwen", desc: "硅基流动 · 高速稳定" },
   { id: "modelscope", name: "Qwen-Image", desc: "通义万相 · 支持图生图" },
   { id: "nanobanana", name: "Nano Banana Pro", desc: "专业电商出图" },
 ];
@@ -171,6 +172,38 @@ export default function InfiniteCanvas() {
   const [sizeDropdownPos, setSizeDropdownPos] = useState<DropdownPosition>({ x: 0, y: 0 });
   const [presetDropdownPos, setPresetDropdownPos] = useState<DropdownPosition>({ x: 0, y: 0 });
   const [toolMode, setToolMode] = useState<"select" | "pan">("select");
+  const spacePressedRef = useRef(false);
+  const prevToolModeRef = useRef<"select" | "pan">("select");
+
+  // 按住空格临时切换到 pan 模式，松开恢复（类似 Figma/PS 交互）
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      const target = e.target as HTMLElement;
+      const tag = target.tagName;
+      const isEditable = tag === "TEXTAREA" || tag === "INPUT" || target.isContentEditable;
+      if (isEditable) return;
+      if (spacePressedRef.current) return;
+      e.preventDefault();
+      spacePressedRef.current = true;
+      prevToolModeRef.current = toolMode;
+      // 仅当当前是 select 时临时切到 pan（不覆盖用户手动选的 pan）
+      if (toolMode === "select") setToolMode("pan");
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      if (!spacePressedRef.current) return;
+      spacePressedRef.current = false;
+      // 恢复到空格按下前的模式（仅在临时模式是 pan 时切回 select）
+      setToolMode(prev => (prev === "pan" && prevToolModeRef.current === "select") ? "select" : prev);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [toolMode]);
 
   // 画布持久化状态
   const [currentCanvasId, setCurrentCanvasId] = useState<string | null>(null);
@@ -486,7 +519,7 @@ export default function InfiniteCanvas() {
       case "generator":
         node = {
           id: genId("gen"), type, x: pos.x, y: pos.y, width: 340, height: 480,
-          content: "", title: "图片生成器", model: "modelscope", size: "1:1", preset: "main", generating: false,
+          content: "", title: "图片生成器", model: "siliconflow", size: "1:1", preset: "main", generating: false,
         };
         break;
       default:

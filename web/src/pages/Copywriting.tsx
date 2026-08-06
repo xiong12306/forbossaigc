@@ -1,7 +1,6 @@
 import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Type,
   Sparkles,
   Tag,
   ShoppingBag,
@@ -12,37 +11,33 @@ import {
   RefreshCw,
   AlertCircle,
 } from "lucide-react";
-import { chat as apiChat } from "@/api";
+import { generateCopywriting as apiGenerate } from "@/api";
 
-// 文案类型配置
+// 文案类型配置（value 与后端 copy_type 一致）
 const COPY_TYPES = [
   {
     value: "title",
     label: "商品标题",
     desc: "吸睛短标题，突出卖点",
     icon: Tag,
-    promptKey: "商品标题",
   },
   {
     value: "selling",
     label: "卖点文案",
     desc: "提炼核心卖点，分点展示",
     icon: ShoppingBag,
-    promptKey: "卖点文案",
   },
   {
     value: "xhs",
     label: "小红书种草",
     desc: "口语化种草，氛围感拉满",
     icon: Sparkles,
-    promptKey: "小红书种草文案",
   },
   {
     value: "script",
     label: "短视频脚本",
     desc: "分镜脚本，节奏紧凑",
     icon: Video,
-    promptKey: "短视频脚本",
   },
 ] as const;
 
@@ -58,18 +53,9 @@ export default function Copywriting() {
   const [step, setStep] = useState<Step>("form");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState("");
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [modelUsed, setModelUsed] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [copied, setCopied] = useState(false);
-
-  // 组装发送给后端的指令
-  const buildCommand = useCallback(() => {
-    const typeLabel =
-      COPY_TYPES.find((t) => t.value === copyType)?.promptKey || "商品标题";
-    let cmd = `给${product}写${typeLabel}`;
-    if (style) cmd += `，${style}风格`;
-    return cmd;
-  }, [product, copyType, style]);
 
   // 生成文案
   const handleGenerate = useCallback(async () => {
@@ -79,25 +65,21 @@ export default function Copywriting() {
     setErrorMsg("");
 
     try {
-      const cmd = buildCommand();
-      const res = await apiChat(cmd, sessionId ?? undefined);
-      setSessionId(res.session_id);
-
-      // 后端返回的 message 即为生成的文案内容
-      if (res.message) {
-        setResult(res.message);
-        setStep("done");
-      } else {
-        setErrorMsg("未能生成文案，请重试。");
-        setStep("error");
-      }
+      const res = await apiGenerate({
+        product: product.trim(),
+        copy_type: copyType,
+        style,
+      });
+      setResult(res.content);
+      setModelUsed(res.model_used);
+      setStep("done");
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : "生成失败，请重试");
       setStep("error");
     } finally {
       setLoading(false);
     }
-  }, [buildCommand, product, sessionId]);
+  }, [product, copyType, style]);
 
   // 复制到剪贴板
   const handleCopy = useCallback(async () => {
@@ -113,12 +95,15 @@ export default function Copywriting() {
   // 重置
   const handleReset = useCallback(() => {
     setResult("");
+    setModelUsed("");
     setStep("form");
     setErrorMsg("");
     setCopied(false);
   }, []);
 
   const canGenerate = product.trim().length > 0 && !loading;
+
+  const currentTypeLabel = COPY_TYPES.find((t) => t.value === copyType)?.label || "商品标题";
 
   return (
     <div className="min-h-full p-4 lg:p-6 text-ivory-500">
@@ -226,7 +211,7 @@ export default function Copywriting() {
                     </div>
                     <div className="font-serif text-lg text-gold-300 mb-1">正在生成文案</div>
                     <div className="text-xs text-ivory-400/50">
-                      {product} · {COPY_TYPES.find((t) => t.value === copyType)?.label}
+                      {product} · {currentTypeLabel}
                     </div>
                   </div>
                 ) : (
@@ -261,11 +246,12 @@ export default function Copywriting() {
                   <div>
                     <h2 className="font-serif text-2xl text-gold-300">生成完成</h2>
                     <p className="text-sm text-ivory-400/60 mt-1">
-                      {product} · {COPY_TYPES.find((t) => t.value === copyType)?.label} · {style}
+                      {product} · {currentTypeLabel} · {style}
                     </p>
                   </div>
-                  <span className="px-3 py-1 rounded-full bg-gold-500/15 text-gold-300 border border-gold-500/30 text-xs">
-                    ✓ 完成
+                  <span className="px-3 py-1 rounded-full bg-gold-500/15 text-gold-300 border border-gold-500/30 text-xs flex items-center gap-1">
+                    <Sparkles className="w-3 h-3" />
+                    {modelUsed.split("/").pop() || modelUsed}
                   </span>
                 </div>
 
@@ -309,7 +295,7 @@ export default function Copywriting() {
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={handleReset}
+                    onClick={handleGenerate}
                     className="flex-1 py-3 rounded-full bg-gold-500 hover:bg-gold-400 text-charcoal-900 font-medium text-sm shadow-gold-glow transition flex items-center justify-center gap-2"
                   >
                     <RefreshCw className="w-4 h-4" />
@@ -323,6 +309,13 @@ export default function Copywriting() {
                     {copied ? "已复制" : "复制文案"}
                   </button>
                 </div>
+
+                <button
+                  onClick={handleReset}
+                  className="w-full py-2.5 text-xs text-ivory-400/50 hover:text-ivory-400 transition"
+                >
+                  ← 返回重新填写
+                </button>
               </motion.div>
             )}
 
@@ -340,12 +333,22 @@ export default function Copywriting() {
                 </div>
                 <div className="font-serif text-xl text-terracotta-300 mb-2">生成失败</div>
                 <div className="text-sm text-ivory-400/60 mb-6 text-center max-w-md">{errorMsg}</div>
-                <button
-                  onClick={handleReset}
-                  className="px-6 py-2.5 rounded-full border border-gold-500/40 text-gold-300 hover:bg-gold-500/10 text-sm transition"
-                >
-                  重新填写
-                </button>
+                <div className="flex gap-3">
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleGenerate}
+                    className="px-6 py-2.5 rounded-full bg-gold-500 hover:bg-gold-400 text-charcoal-900 text-sm transition"
+                  >
+                    重试
+                  </motion.button>
+                  <button
+                    onClick={handleReset}
+                    className="px-6 py-2.5 rounded-full border border-gold-500/40 text-gold-300 hover:bg-gold-500/10 text-sm transition"
+                  >
+                    重新填写
+                  </button>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

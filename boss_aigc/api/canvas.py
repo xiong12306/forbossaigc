@@ -63,7 +63,7 @@ class CanvasGenerateRequest(BaseModel):
     prompt: str = ""
     reference_images: list[str] = []
     reference_texts: list[str] = []
-    model: str = "modelscope"  # modelscope | nanobanana
+    model: str = "modelscope"  # modelscope | siliconflow | nanobanana
     size: str = "1:1"
     preset: str = "main"
 
@@ -417,31 +417,150 @@ async def _generate_via_modelscope(req: CanvasGenerateRequest, final_prompt: str
             await asyncio.sleep(wait)
 
 
+# ============ SiliconFlow 平台调用 ============
+
+def _siliconflow_generate_sync(
+    api_key: str,
+    api_base: str,
+    model: str,
+    prompt: str,
+    image_size: str,
+    ref_data_uri: str | None,
+    timeout: float,
+) -> str:
+    """同步调用 SiliconFlow API，返回远程图片 URL。
+
+    SiliconFlow 是同步 API：POST /images/generations 返回 images[0].url。
+    文生图不传 image；图生图传 image 字段为 base64 data URI（FLUX.1-Kontext-dev/Qwen-Image-Edit）。
+    生成的 URL 有效期仅 1 小时，必须立即下载转存。
+    """
+    url = f"{api_base.rstrip('/')}/images/generations"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    body: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+        "image_size": image_size,
+    }
+    if ref_data_uri:
+        body["image"] = ref_data_uri
+
+    with httpx.Client(trust_env=False, http2=False) as client:
+        resp = client.post(url, json=body, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+
+    images = data.get("images") or []
+    if not images and data.get("data"):
+        images = data["data"]
+    if not images or not images[0].get("url"):
+        raise HTTPException(status_code=502, detail=f"SiliconFlow 返回未含图片URL: {str(data)[:200]}")
+    return images[0]["url"]
+
+
+async def _generate_via_siliconflow(req: CanvasGenerateRequest, final_prompt: str, ref_data_uris: list[str]) -> CanvasGenerateResponse:
+    """通过 SiliconFlow 生成图片（同步API，用线程池避免阻塞事件循环）。"""
+    settings = get_settings()
+    if not settings.siliconflow_api_key:
+        raise HTTPException(status_code=503, detail="SiliconFlow API key 未配置")
+
+    sf_size = _SIZE_MAP.get(req.size, "1024x1024")
+    is_edit = len(ref_data_uris) > 0
+    model_name = settings.siliconflow_edit_model if is_edit else settings.siliconflow_model
+
+    logger.info("SiliconFlow 画布生成: is_edit=%s refs=%d model=%s prompt=%s",
+                is_edit, len(ref_data_uris), model_name, final_prompt[:120])
+
+    api_base = settings.siliconflow_api_base
+    api_key = settings.siliconflow_api_key
+    timeout = httpx.Timeout(connect=15.0, read=120.0, write=60.0, pool=15.0)
+    ref_uri = ref_data_uris[0] if ref_data_uris else None
+
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            remote_url = await asyncio.to_thread(
+                _siliconflow_generate_sync,
+                api_key, api_base, model_name, final_prompt, sf_size, ref_uri, timeout,
+            )
+            async with httpx.AsyncClient(trust_env=False, http2=False) as client:
+                try:
+                    local_url = await _download_image(client, remote_url)
+                except Exception as e:
+                    logger.warning("SiliconFlow 下载失败，使用原始URL: %s", e)
+                    local_url = remote_url
+
+            return CanvasGenerateResponse(
+                image_url=local_url,
+                prompt_used=final_prompt,
+                model_used="siliconflow",
+            )
+        except HTTPException:
+            raise
+        except httpx.TimeoutException as e:
+            last_err = e
+            logger.warning("SiliconFlow 超时（重试%d/3）", attempt + 1)
+        except httpx.RequestError as e:
+            last_err = e
+            logger.warning("SiliconFlow 请求失败（重试%d/3）: %s", attempt + 1, str(e)[:100])
+        except Exception as e:
+            last_err = e
+            logger.warning("SiliconFlow 未知错误（重试%d/3）: %s", attempt + 1, str(e)[:100])
+
+        if attempt < 2:
+            await asyncio.sleep(2)
+
+    raise HTTPException(status_code=502, detail=f"SiliconFlow 生成失败（重试3次）: {last_err}")
+
+
 # ============ 主入口：按 model 分发 ============
 
 @router.post("/generate", response_model=CanvasGenerateResponse)
 async def canvas_generate(req: CanvasGenerateRequest) -> CanvasGenerateResponse:
-    """画布异步生成图片，按 model 参数分发到 ModelScope / NanoBanana。
-    ModelScope 失败时自动降级到 NanoBanana（如果配置了key且用户没强制选nanobanana）。
+    """画布异步生成图片，按 model 参数分发到对应平台。
+
+    用户指定模型优先（modelscope|siliconflow|nanobanana）。
+    未显式指定时按 PLATFORM_PROVIDER 选默认平台。
+    当前用户指定的平台失败时，可降级到其他可用平台。
     """
     final_prompt = _build_final_prompt(req)
     ref_data_uris = _resolve_ref_images(req)
 
-    model = (req.model or "modelscope").lower()
+    model = (req.model or "").lower()
     settings = get_settings()
+
+    # 未指定时按 PLATFORM_PROVIDER 选默认
+    if not model:
+        if settings.platform_provider == "siliconflow" and settings.siliconflow_api_key:
+            model = "siliconflow"
+        elif settings.platform_provider == "nanobanana" and settings.nanobanana_api_key:
+            model = "nanobanana"
+        else:
+            model = "modelscope"
 
     # 用户指定模型优先
     if model == "nanobanana":
         return await _generate_via_nanobanana(req, final_prompt, ref_data_uris)
+    if model == "siliconflow":
+        return await _generate_via_siliconflow(req, final_prompt, ref_data_uris)
 
-    # 默认走 ModelScope，失败降级到 NanoBanana
+    # 默认走 ModelScope，失败时尝试降级
     try:
         return await _generate_via_modelscope(req, final_prompt, ref_data_uris)
     except HTTPException as e:
-        # 429/502/503 等服务不可用时降级
-        if settings.nanobanana_api_key and e.status_code in (429, 502, 503, 504):
-            logger.warning("ModelScope 不可用（%d），降级到 NanoBanana", e.status_code)
-            return await _generate_via_nanobanana(req, final_prompt, ref_data_uris)
+        # 429/502/503/504 时按顺序尝试 SiliconFlow → NanoBanana
+        if e.status_code in (429, 502, 503, 504):
+            if settings.siliconflow_api_key:
+                logger.warning("ModelScope 不可用（%d），降级到 SiliconFlow", e.status_code)
+                try:
+                    return await _generate_via_siliconflow(req, final_prompt, ref_data_uris)
+                except HTTPException:
+                    pass
+            if settings.nanobanana_api_key:
+                logger.warning("降级到 NanoBanana", e.status_code)
+                return await _generate_via_nanobanana(req, final_prompt, ref_data_uris)
         raise
 
 

@@ -53,6 +53,7 @@ def register_default_adapters() -> AdapterRegistry:
 
     根据config.platform_provider决定注册哪个真实平台：
     - platform_provider == "modelscope" 且已配 key: 注册 ModelScopeAdapter
+    - platform_provider == "siliconflow" 且已配 key: 注册 SiliconFlowAdapter
     - platform_provider == "nanobanana" 且已配 key: 注册 NanoBananaAdapter
     - 其余情况: 仅注册 Mock 适配器
     始终注册 Mock 适配器（供 PLATFORM_PROVIDER=mock 显式使用）。
@@ -74,6 +75,9 @@ def register_default_adapters() -> AdapterRegistry:
     if settings.platform_provider == "modelscope" and settings.modelscope_api_key:
         from boss_aigc.execution.modelscope_adapter import ModelScopeAdapter
         registry.register(PlatformKind.MODELSCOPE, ModelScopeAdapter())
+    elif settings.platform_provider == "siliconflow" and settings.siliconflow_api_key:
+        from boss_aigc.execution.siliconflow_adapter import SiliconFlowAdapter
+        registry.register(PlatformKind.SILICONFLOW, SiliconFlowAdapter())
     elif settings.platform_provider == "nanobanana" and settings.nanobanana_api_key:
         from boss_aigc.execution.nanobanana_adapter import NanoBananaAdapter
         registry.register(PlatformKind.NANOBANANA, NanoBananaAdapter())

@@ -45,6 +45,7 @@ class PlatformKind(str, Enum):
     MOCK = "mock"                       # Mock 适配器（占位结果）
     NANOBANANA = "nanobanana"           # NanoBanana（电商生图，通过Ace Data Cloud接入）
     MODELSCOPE = "modelscope"           # 魔搭 ModelScope（免费文生图，Qwen-Image 等）
+    SILICONFLOW = "siliconflow"         # 硅基流动（FLUX 系列模型，新用户送 2000 万 token）
     JIMENG = "jimeng"                   # 即梦（Seedream 出图 / Seedance 图转视频）
     TONGYI_WANXIANG = "tongyi_wanxiang"  # 通义万相（备用生图平台）
     LLM = "llm"                          # 文案 LLM（写商品文案/标题）

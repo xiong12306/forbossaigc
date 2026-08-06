@@ -58,10 +58,23 @@ class Settings:
     tongyi_api_key: str = ""                  # 通义万相 API key 占位
     llm_api_key: str = ""                     # 文案 LLM API key 占位
 
-    platform_provider: str = os.environ.get("PLATFORM_PROVIDER", "mock")  # mock|modelscope|nanobanana
+    platform_provider: str = os.environ.get("PLATFORM_PROVIDER", "mock")  # mock|modelscope|siliconflow|nanobanana
     modelscope_api_key: str = os.environ.get("MODELSCOPE_API_KEY", "")
     modelscope_api_base: str = os.environ.get("MODELSCOPE_API_BASE", "https://api-inference.modelscope.cn/v1")
     modelscope_model: str = os.environ.get("MODELSCOPE_MODEL", "Qwen/Qwen-Image")
+
+    # 硅基流动 SiliconFlow（新用户送 2000 万 token 永久免费）
+    # 默认 Qwen/Qwen-Image（免实名即可用）；FLUX 系列需实名后才能调用
+    siliconflow_api_key: str = os.environ.get("SILICONFLOW_API_KEY", "")
+    siliconflow_api_base: str = os.environ.get("SILICONFLOW_API_BASE", "https://api.siliconflow.cn/v1")
+    siliconflow_model: str = os.environ.get("SILICONFLOW_MODEL", "Qwen/Qwen-Image")
+    siliconflow_edit_model: str = os.environ.get("SILICONFLOW_EDIT_MODEL", "Qwen/Qwen-Image-Edit")
+    # 文案 LLM：默认复用 SiliconFlow key 调用 Qwen2.5-14B-Instruct（免实名、中文好、稳定性强）
+    # 7B 在小红书口语化场景偶发重复内容，14B 质量明显提升
+    # 也可换成 deepseek-ai/DeepSeek-V3 或 Qwen/Qwen2.5-72B-Instruct（需实名）
+    llm_chat_model: str = os.environ.get("LLM_CHAT_MODEL", "Qwen/Qwen2.5-14B-Instruct")
+    llm_chat_api_base: str = os.environ.get("LLM_CHAT_API_BASE", "")  # 空则复用 siliconflow_api_base
+    llm_chat_api_key: str = os.environ.get("LLM_CHAT_API_KEY", "")  # 空则复用 siliconflow_api_key
 
     high_cost_image_threshold: int = 20       # 高成本图片数量阈值
     high_cost_credits_threshold: int = 200    # 高成本积分阈值

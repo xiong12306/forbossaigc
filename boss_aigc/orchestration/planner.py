@@ -54,7 +54,7 @@ def select_platform(task_type: TaskType, summary: TaskSummary) -> PlatformKind:
     """选择执行平台。
 
     根据config.platform_provider和task_type选择平台：
-    - IMAGE_GEN → 按 platform_provider（modelscope/nanobanana）选择对应真实平台，
+    - IMAGE_GEN → 按 platform_provider（modelscope/siliconflow/nanobanana）选择对应真实平台，
       未配置对应 key 时降级为 MOCK
     - 其他类型 → MOCK
     后续可扩展：
@@ -68,6 +68,8 @@ def select_platform(task_type: TaskType, summary: TaskSummary) -> PlatformKind:
     if task_type == TaskType.IMAGE_GEN:
         if settings.platform_provider == "modelscope" and settings.modelscope_api_key:
             return PlatformKind.MODELSCOPE
+        if settings.platform_provider == "siliconflow" and settings.siliconflow_api_key:
+            return PlatformKind.SILICONFLOW
         if settings.platform_provider == "nanobanana" and settings.nanobanana_api_key:
             return PlatformKind.NANOBANANA
     return PlatformKind.MOCK
