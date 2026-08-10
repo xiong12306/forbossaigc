@@ -168,31 +168,38 @@ class RuleBasedRecognizer(IntentRecognizer):
                 product = m.group(1).strip()
                 # 过滤过短或异常长的误命中，同时过滤掉常见非商品词
                 product = self._clean_product(product)
-                if product and 1 <= len(product) <= 20:
+                if product and 2 <= len(product) <= 20:
                     return product
 
         # 兜底：短文本（<=10字）+ 包含"图"字，假设整个文本去掉"图"就是商品
         if len(text) <= 10 and ("图" in text):
             cleaned = text.replace("图", "").strip()
             cleaned = self._clean_product(cleaned)
-            if cleaned and 1 <= len(cleaned) <= 20:
+            if cleaned and 2 <= len(cleaned) <= 20:
                 return cleaned
         return None
 
     def _clean_product(self, text: str) -> Optional[str]:
-        """清理商品名，去掉语气词、量词等干扰"""
+        """清理商品名，去掉语气词、量词、图片类型词等干扰"""
         if not text:
             return None
         # 去掉常见虚词和量词
         noise_words = ["给", "把", "帮", "为", "我", "你", "的", "了", "啊", "呢", "吧",
                        "几", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十",
-                       "张", "个", "份", "点", "下"]
+                       "张", "个", "份", "点", "下", "键",
+                       # 快捷指令前缀
+                       "一键",
+                       # 图片类型词不能作为商品名
+                       "主图", "详情图", "细节图", "卖点图", "场景图", "实景图", "海报",
+                       "营销海报", "促销海报", "活动图", "轮播图", "首页图",
+                       "主", "详情", "细节", "卖点", "场景", "实景", "轮播", "首页",
+                       "图", "商品", "产品", "出"]
         cleaned = text
         for nw in noise_words:
             cleaned = cleaned.replace(nw, "")
         cleaned = cleaned.strip()
-        # 过滤掉空或过短（单字且不是中文商品名）
-        if len(cleaned) < 1:
+        # 过滤掉空或过短（清除干扰词后为空或单字）
+        if len(cleaned) < 2:
             return None
         return cleaned
 
