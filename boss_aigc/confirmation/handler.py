@@ -90,12 +90,12 @@ def _branch_first_turn(
 
     intent: TaskIntent = upstream
 
-    # 快速通道：检测到「一键出X」指令且有参考图，直接自动确认放行（无需老板点确认）
-    raw_text = (intent.raw_text or "").strip()
-    has_ref_image = "reference_image" in intent.slots
-    is_quick_cmd = raw_text.startswith("一键出")
-    if is_quick_cmd and has_ref_image:
-        logger.info("检测到一键出图快速指令（有参考图），跳过确认直接放行")
+    # 极简直出模式：所有 IMAGE_GEN 任务直接放行，不再等待确认
+    # 用户上传图片+选类型 → 直接出图；纯文字描述 → 直接出图
+    # 缺失槽位用默认值填充，出错可以重做
+    from boss_aigc.contracts.enums import TaskType
+    if intent.task_type == TaskType.IMAGE_GEN:
+        logger.info("IMAGE_GEN 极简直出模式，跳过确认直接放行")
         # 确保有product默认值（一键出指令抽取出的product可能为空或乱码）
         if not intent.product or len(intent.product) < 1:
             intent.product = "参考图商品"

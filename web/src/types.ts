@@ -66,3 +66,39 @@ export interface ChatMessage {
   followUp?: string;
   speakText?: string; // 助手回复的 TTS 播报文本
 }
+
+// 会话管理相关类型
+export interface SessionSummary {
+  session_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+  last_message?: string;
+}
+
+export interface SessionListResponse {
+  sessions: SessionSummary[];
+}
+
+export interface SessionDetailResponse {
+  session_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  messages: Array<{
+    role: "boss" | "assistant";
+    text: string;
+    images?: string[];
+    summary?: Summary | null;
+    artifacts?: Artifact[] | null;
+    follow_up?: string;
+    speak_text?: string;
+    created_at?: string;
+  }>;
+}
+
+export interface SessionCreateResponse {
+  session_id: string;
+  title: string;
+}

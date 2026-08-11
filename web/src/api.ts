@@ -111,6 +111,68 @@ export interface GalleryImage {
   created_at: number;
 }
 
+// ============ 会话管理 ============
+
+export interface SessionInfo {
+  session_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+  last_message: string | null;
+}
+
+export interface SessionListResponse {
+  sessions: SessionInfo[];
+}
+
+export interface SessionDetail {
+  session_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  messages: any[];
+}
+
+export async function listSessions(): Promise<SessionInfo[]> {
+  const res = await fetch(`${API_BASE}/api/sessions`, { headers: { ...authHeaders() } });
+  if (!res.ok) throw new Error(`获取会话列表失败 (${res.status})`);
+  const data = (await res.json()) as SessionListResponse;
+  return data.sessions;
+}
+
+export async function getSession(sessionId: string): Promise<SessionDetail> {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, { headers: { ...authHeaders() } });
+  if (!res.ok) throw new Error(`获取会话详情失败 (${res.status})`);
+  return await res.json();
+}
+
+export async function createSession(): Promise<{ session_id: string; title: string }> {
+  const res = await fetch(`${API_BASE}/api/sessions/new`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) throw new Error(`新建会话失败 (${res.status})`);
+  return await res.json();
+}
+
+export async function renameSession(sessionId: string, title: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/sessions/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ session_id: sessionId, title }),
+  });
+  if (!res.ok) throw new Error(`重命名失败 (${res.status})`);
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) throw new Error(`删除失败 (${res.status})`);
+}
+
 export interface CanvasGenerateRequest {
   prompt: string;
   reference_images?: string[];
@@ -157,6 +219,79 @@ export async function canvasGenerate(req: CanvasGenerateRequest): Promise<Canvas
     throw new Error(errMsg);
   }
   return (await res.json()) as CanvasGenerateResponse;
+}
+
+// ============ 异步生图（submit + poll）============
+
+export interface CanvasSubmitRequest {
+  prompt: string;
+  reference_images?: string[];
+  reference_texts?: string[];
+  model?: string;
+  size?: string;
+  preset?: string;
+}
+
+export interface CanvasSubmitResponse {
+  task_id: string;
+  status: string;
+}
+
+export interface CanvasTaskStatus {
+  task_id: string;
+  status: "pending" | "running" | "succeeded" | "failed";
+  stage: string; // submitting | queued | generating | downloading | done
+  image_url: string;
+  error: string;
+  error_kind: string;
+  error_suggestion: string;
+  prompt_used: string;
+  model_used: string;
+  created_at: number;
+}
+
+export async function canvasSubmit(req: CanvasSubmitRequest): Promise<CanvasSubmitResponse> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/canvas/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(req),
+    });
+  } catch {
+    throw new Error("无法连接到服务，请确认网络是否正常。");
+  }
+  if (!res.ok) {
+    let errMsg = `提交失败 (${res.status})`;
+    try { const errData = await res.json(); errMsg = errData.detail || errMsg; } catch {}
+    throw new Error(errMsg);
+  }
+  return await res.json();
+}
+
+export async function canvasStatus(taskId: string): Promise<CanvasTaskStatus> {
+  const res = await fetch(`${API_BASE}/api/canvas/status/${taskId}`, {
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) {
+    let errMsg = `查询状态失败 (${res.status})`;
+    try { const errData = await res.json(); errMsg = errData.detail || errMsg; } catch {}
+    throw new Error(errMsg);
+  }
+  return await res.json();
+}
+
+export interface CanvasPresetsResponse {
+  presets: Record<string, string>;
+  categories: Array<{ id: string; name: string; presets: string[] }>;
+}
+
+export async function getCanvasPresets(): Promise<CanvasPresetsResponse> {
+  const res = await fetch(`${API_BASE}/api/canvas/presets`, {
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) throw new Error(`获取预设失败 (${res.status})`);
+  return await res.json();
 }
 
 export interface CanvasInfo {

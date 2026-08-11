@@ -366,31 +366,27 @@ export default function Gallery({
               <X className="w-5 h-5" />
             </button>
 
-            {/* 图片容器 */}
-            <motion.div
+            {/* 图片 — 点击图片本身不关闭，点击图片外的蒙层区域关闭 */}
+            <motion.img
               initial={{ scale: 0.9 }}
               animate={{ scale: 1 }}
               exit={{ scale: 0.9 }}
-              className="relative overflow-hidden flex items-center justify-center w-full h-full"
+              ref={imgRef}
+              src={preview.url_or_path!}
+              alt="产出物预览"
+              draggable={false}
+              className="max-w-[90vw] max-h-[85vh] object-contain select-none rounded-lg shadow-2xl z-10"
               onClick={(e) => e.stopPropagation()}
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseUp}
-              style={{ cursor: scale > 1 ? (isDragging ? "grabbing" : "grab") : "default" }}
-            >
-              <img
-                ref={imgRef}
-                src={preview.url_or_path!}
-                alt="产出物预览"
-                draggable={false}
-                className="max-w-[90vw] max-h-[85vh] object-contain select-none rounded-lg shadow-2xl"
-                style={{
-                  transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
-                  transition: isDragging ? "none" : "transform 0.2s ease-out",
-                }}
-              />
-            </motion.div>
+              style={{
+                cursor: scale > 1 ? (isDragging ? "grabbing" : "grab") : "default",
+                transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
+                transition: isDragging ? "none" : "transform 0.2s ease-out",
+              }}
+            />
 
             {/* 底部提示 */}
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[11px] text-ivory-500/60 bg-charcoal-800/70 rounded-full px-3 py-1 backdrop-blur">

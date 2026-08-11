@@ -6,14 +6,16 @@ import ChatStream from "@/components/ChatStream";
 import SidePanel from "@/components/SidePanel";
 import BrandOnboarding from "@/components/BrandOnboarding";
 import GalleryDrawer from "@/components/GalleryDrawer";
+import SessionSidebar from "@/components/SessionSidebar";
 import { useChat } from "@/hooks/useChat";
 import { useSpeech } from "@/hooks/useSpeech";
+import { Menu, X } from "lucide-react";
 import type { SelectedTypes } from "@/components/ImageTypeSelector";
 
 /**
- * 主页面：单页三栏布局
- * 左栏（窄，约 200px）状态时间线 + 中栏（flex-1）聊天流 + 右栏（约 360px）上下文卡片
- * 响应式：平板折叠左栏到顶部水平时间线，移动端单列
+ * 主页面：
+ * 桌面端：左栏(会话列表260px) + 中栏(聊天流flex-1) + 右栏(上下文360px)
+ * 移动端：汉堡菜单 → 侧边抽屉
  */
 export default function Home() {
   const {
@@ -26,23 +28,30 @@ export default function Home() {
     sendMessage,
     uploadImage,
     resetSession,
+    loadSessions,
+    activeSessionId,
+    startNewSession,
   } = useChat();
 
   const inputRef = useRef<HTMLInputElement>(null);
   const { speak } = useSpeech();
   const [galleryOpen, setGalleryOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // 监听最新助手消息，触发 TTS 播报（拟人化语音回复）
+  // 首次加载：获取会话列表
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
+
+  // 监听最新助手消息，触发 TTS 播报
   const lastMsg = messages[messages.length - 1];
   const lastSpeakText = lastMsg?.role === "assistant" ? lastMsg.speakText : undefined;
   useEffect(() => {
     if (lastSpeakText) speak(lastSpeakText);
   }, [lastSpeakText, speak]);
 
-  // 修改按钮：聚焦输入框，让老板用文字描述调整
   const handleModify = useCallback(() => inputRef.current?.focus(), []);
 
-  // 带图片类型选择的确认：根据用户选择调整参数后确认
   const handleConfirmWithSelection = useCallback(
     async (selectedTypes?: SelectedTypes) => {
       const defaultType = (currentSummary?.params.image_type as string) || "main";
@@ -71,23 +80,72 @@ export default function Home() {
     [sendMessage, currentSummary]
   );
 
+  const handleNewChat = async () => {
+    await startNewSession();
+    setSidebarOpen(false);
+  };
+
   return (
     <div className="h-screen w-screen flex flex-col bg-charcoal-900 text-ivory-500 overflow-hidden">
-      <BrandBar onReset={resetSession} onOpenGallery={() => setGalleryOpen(true)} />
+      <BrandBar
+        onReset={resetSession}
+        onOpenGallery={() => setGalleryOpen(true)}
+        onToggleSidebar={() => setSidebarOpen((v) => !v)}
+      />
 
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.5 }}
-        className="flex-1 flex flex-col lg:flex-row overflow-hidden"
+        className="flex-1 flex flex-col lg:flex-row overflow-hidden relative"
       >
-        {/* 左栏：时间线（桌面垂直） */}
-        <aside className="hidden md:block md:w-[200px] flex-shrink-0 border-r border-brown-700/50 bg-charcoal-800/40 overflow-y-auto">
-          <Timeline timeline={timeline} />
+        {/* 桌面端：会话列表侧栏 */}
+        <aside className="hidden lg:flex lg:w-[260px] flex-shrink-0 border-r border-brown-700/50 bg-charcoal-850/50 flex-col">
+          <SessionSidebar />
+          {/* 底部时间线（精简） */}
+          <div className="border-t border-brown-700/50 p-2">
+            <Timeline timeline={timeline} />
+          </div>
         </aside>
+
+        {/* 移动端：会话抽屉 */}
+        {sidebarOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSidebarOpen(false)}
+              className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+            />
+            <motion.aside
+              initial={{ x: -280 }}
+              animate={{ x: 0 }}
+              exit={{ x: -280 }}
+              transition={{ type: "spring", damping: 25 }}
+              className="fixed left-0 top-0 bottom-0 w-[260px] z-50 lg:hidden bg-charcoal-850 border-r border-brown-700/50 flex flex-col pt-14"
+            >
+              <SessionSidebar onClose={() => setSidebarOpen(false)} />
+              <div className="border-t border-brown-700/50 p-2">
+                <Timeline timeline={timeline} />
+              </div>
+            </motion.aside>
+          </>
+        )}
 
         {/* 中栏：聊天流（主） */}
         <main className="flex-1 flex flex-col min-w-0">
+          {/* 空状态时显示提示 */}
+          {messages.length === 0 && !activeSessionId && (
+            <div className="flex items-center justify-center px-6 pt-4">
+              <button
+                onClick={handleNewChat}
+                className="text-gold-400 hover:text-gold-300 text-sm underline underline-offset-4"
+              >
+                开始新对话 →
+              </button>
+            </div>
+          )}
           <ChatStream
             messages={messages}
             loading={loading}
@@ -108,19 +166,18 @@ export default function Home() {
             onCancel={() => sendMessage("取消", { hidePanel: true })}
             onAccept={() => sendMessage("可以了")}
             onRedo={() => sendMessage("重做", { hidePanel: true })}
-            onNewTask={resetSession}
+            onNewTask={startNewSession}
           />
         </aside>
       </motion.div>
 
-      {/* 平板/移动端顶部水平时间线（md 以下显示在底部条带） */}
+      {/* 移动端底部水平时间线 */}
       <div className="md:hidden border-t border-brown-700/50 bg-charcoal-800/60 px-2 py-1.5">
         <Timeline timeline={timeline} horizontal />
       </div>
 
       <BrandOnboarding />
 
-      {/* 图库抽屉 */}
       <GalleryDrawer open={galleryOpen} onClose={() => setGalleryOpen(false)} />
     </div>
   );

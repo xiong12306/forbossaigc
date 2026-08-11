@@ -1,23 +1,33 @@
-import { RotateCcw, Sparkles, Wand2, ImageIcon, Layout } from "lucide-react";
+import { RotateCcw, Sparkles, Wand2, ImageIcon, Layout, Menu } from "lucide-react";
 import { useLocation, Link } from "react-router-dom";
 
 interface Props {
   onReset: () => void;
   onOpenGallery?: () => void;
+  onToggleSidebar?: () => void;
 }
 
 /**
  * 顶部品牌栏：左侧 Logo + 导航切换 + 右侧风格徽章与重置按钮
  */
-export default function BrandBar({ onReset, onOpenGallery }: Props) {
+export default function BrandBar({ onReset, onOpenGallery, onToggleSidebar }: Props) {
   const location = useLocation();
   const isHome = location.pathname === "/";
   const isCanvas = location.pathname === "/canvas";
   const isPlatform = location.pathname.startsWith("/platform");
 
   return (
-    <header className="flex items-center justify-between px-4 sm:px-6 py-3 bg-brown-900/70 backdrop-blur border-b border-gold-500/20">
-      <div className="flex items-center gap-4">
+    <header className="flex items-center justify-between px-4 sm:px-6 py-3 bg-brown-900/70 backdrop-blur border-b border-gold-500/20 relative z-50">
+      <div className="flex items-center gap-3 sm:gap-4">
+        {/* 移动端菜单按钮 */}
+        {onToggleSidebar && isHome && (
+          <button
+            onClick={onToggleSidebar}
+            className="lg:hidden inline-flex items-center justify-center w-9 h-9 rounded-lg text-ivory-400/80 hover:text-gold-300 hover:bg-brown-800/60 transition"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        )}
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gold-500 to-terracotta-500 flex items-center justify-center shadow-gold-glow">
             <Sparkles className="w-4 h-4 text-charcoal-900" />
@@ -33,7 +43,7 @@ export default function BrandBar({ onReset, onOpenGallery }: Props) {
         </div>
 
         {/* 导航切换 */}
-        <nav className="flex items-center gap-1 sm:ml-2">
+        <nav className="hidden sm:flex items-center gap-1 sm:ml-2">
           <Link
             to="/"
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition border ${

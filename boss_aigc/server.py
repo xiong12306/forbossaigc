@@ -56,21 +56,76 @@ app.add_middleware(
 
 # ---------- 全局会话存储（内存，demo 级）----------
 _shared_asset_store: AssetStore = create_default_asset_store()
+
+from datetime import datetime
+from dataclasses import dataclass, field
+
+@dataclass
+class SessionMeta:
+    session_id: str
+    title: str = "新对话"
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
+    messages: list[dict[str, Any]] = field(default_factory=list)  # 消息历史
+
 _sessions: dict[str, tuple[Pipeline, SessionContext]] = {}
+_session_meta: dict[str, SessionMeta] = {}
 
 # 简易请求计数（供 /metrics 用）
 _request_counter: dict[str, int] = {}
 
 
 def _get_or_create_session(session_id: Optional[str]) -> tuple[str, Pipeline, SessionContext]:
-    """按 session_id 取/创建会话。首次传入 None 时新建。"""
+    """按 session_id 取/创建会话。首次传入 None 时新建。
+
+    若 session_id 已在 _session_meta 中（历史会话）但 pipeline 不在 _sessions（服务重启），
+    则重建 pipeline 但保留已有 meta（消息历史、标题等）。
+    """
     if session_id and session_id in _sessions:
+        meta = _session_meta.get(session_id)
+        if meta:
+            meta.updated_at = datetime.now()
         return session_id, *_sessions[session_id]
     new_id = session_id or uuid.uuid4().hex[:12]
     pipeline, ctx = build_full_pipeline(asset_store=_shared_asset_store)
     ctx.session_id = new_id
     _sessions[new_id] = (pipeline, ctx)
+    # 仅在 meta 不存在时新建；已存在则保留（支持继续历史对话）
+    if new_id not in _session_meta:
+        _session_meta[new_id] = SessionMeta(session_id=new_id)
     return new_id, pipeline, ctx
+
+
+def _append_message(session_id: str, role: str, text: str, images: list[str] | None = None,
+                    artifacts: list[dict] | None = None, status: str | None = None,
+                    summary: dict | None = None, follow_up: str | None = None,
+                    speak_text: str | None = None) -> None:
+    """追加一条消息到会话历史。"""
+    meta = _session_meta.get(session_id)
+    if meta is None:
+        return
+    msg: dict[str, Any] = {
+        "role": role,
+        "text": text,
+    }
+    if images:
+        msg["images"] = images
+    if artifacts:
+        msg["artifacts"] = artifacts
+    if status:
+        msg["status"] = status
+    if summary:
+        msg["summary"] = summary
+    if follow_up:
+        msg["followUp"] = follow_up
+    if speak_text:
+        msg["speakText"] = speak_text
+    meta.messages.append(msg)
+    meta.updated_at = datetime.now()
+    # 自动生成标题：取老板第一条消息的前20字
+    if meta.title == "新对话" and role == "boss" and text:
+        title_text = text.strip()[:20]
+        meta.title = title_text if title_text else "新对话"
 
 
 # ---------- 认证中间件 ----------
@@ -82,7 +137,18 @@ _AUTH_WHITELIST = {
     "/api/upload",
     "/api/reset",
     "/api/gallery",
+    "/api/sessions",
+    "/api/sessions/",
+    "/api/sessions/new",
+    "/api/sessions/rename",
     "/api/canvas/generate",
+    "/api/canvas/submit",
+    "/api/canvas/status/",
+    "/api/canvas/presets",
+    "/api/canvas/list",
+    "/api/canvas/save",
+    "/api/canvas/load/",
+    "/api/canvas/new",
     "/api/copywriting/generate",
     "/metrics",
     "/",
@@ -110,6 +176,11 @@ async def auth_middleware(request: Request, call_next):
         or not is_auth_enabled()
     ):
         return await call_next(request)
+
+    # 支持带路径参数的白名单前缀匹配（如 /api/canvas/status/{task_id}）
+    for wl_path in _AUTH_WHITELIST:
+        if wl_path.endswith("/") and path.startswith(wl_path):
+            return await call_next(request)
 
     # /api/* 需要 token
     auth_header = request.headers.get("Authorization", "")
@@ -339,15 +410,125 @@ def chat(req: ChatRequest) -> ChatResponse:
     # 把老板上传的参考图存入 extras，供理解层/执行层读取
     if req.images:
         ctx.extras["uploaded_images"] = req.images
+    # 记录老板消息
+    _append_message(session_id, "boss", req.message, images=req.images or None)
     resp = pipeline.handle_user_input(req.message, ctx)
-    return _build_chat_response(resp, ctx)
+    chat_resp = _build_chat_response(resp, ctx)
+    # 记录助手消息
+    artifacts_out = _artifacts_to_out(ctx.result)
+    artifacts_dicts = [a.model_dump() for a in artifacts_out] if artifacts_out else None
+    summary_out = None
+    if chat_resp.summary:
+        summary_out = chat_resp.summary.model_dump()
+    _append_message(session_id, "assistant", resp.message,
+                    artifacts=artifacts_dicts, status=chat_resp.status,
+                    summary=summary_out, follow_up=chat_resp.follow_up_question,
+                    speak_text=chat_resp.speak_text)
+    return chat_resp
 
 
 @app.post("/api/reset", response_model=ResetResponse)
 def reset(req: ResetRequest) -> ResetResponse:
-    """重置会话。"""
+    """重置会话（清空消息和pipeline状态，保留session id和meta）。"""
     _sessions.pop(req.session_id, None)
+    if req.session_id in _session_meta:
+        _session_meta.pop(req.session_id, None)
     return ResetResponse(session_id=req.session_id)
+
+
+class SessionOut(BaseModel):
+    session_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    message_count: int
+    last_message: Optional[str] = None
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionOut]
+
+
+class SessionDetailResponse(BaseModel):
+    session_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    messages: list[dict[str, Any]]
+
+
+class RenameRequest(BaseModel):
+    session_id: str
+    title: str
+
+
+@app.get("/api/sessions", response_model=SessionListResponse)
+def list_sessions():
+    """列出所有会话，按更新时间倒序。"""
+    sessions_out = []
+    for sid, meta in sorted(_session_meta.items(), key=lambda x: x[1].updated_at, reverse=True):
+        last_msg = None
+        if meta.messages:
+            for m in reversed(meta.messages):
+                if m.get("text"):
+                    last_msg = m["text"][:50]
+                    break
+        sessions_out.append(SessionOut(
+            session_id=sid,
+            title=meta.title,
+            created_at=meta.created_at.isoformat(),
+            updated_at=meta.updated_at.isoformat(),
+            message_count=len(meta.messages),
+            last_message=last_msg,
+        ))
+    return SessionListResponse(sessions=sessions_out)
+
+
+@app.get("/api/sessions/{session_id}", response_model=SessionDetailResponse)
+def get_session(session_id: str):
+    """获取指定会话的完整消息历史。"""
+    meta = _session_meta.get(session_id)
+    if meta is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return SessionDetailResponse(
+        session_id=session_id,
+        title=meta.title,
+        created_at=meta.created_at.isoformat(),
+        updated_at=meta.updated_at.isoformat(),
+        messages=meta.messages,
+    )
+
+
+@app.post("/api/sessions/new")
+def create_session():
+    """创建新会话。"""
+    new_id = uuid.uuid4().hex[:12]
+    pipeline, ctx = build_full_pipeline(asset_store=_shared_asset_store)
+    ctx.session_id = new_id
+    _sessions[new_id] = (pipeline, ctx)
+    _session_meta[new_id] = SessionMeta(session_id=new_id)
+    return {"session_id": new_id, "title": "新对话"}
+
+
+@app.post("/api/sessions/rename")
+def rename_session(req: RenameRequest):
+    """重命名会话。"""
+    meta = _session_meta.get(req.session_id)
+    if meta is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="会话不存在")
+    meta.title = req.title[:30]
+    meta.updated_at = datetime.now()
+    return {"ok": True, "session_id": req.session_id, "title": meta.title}
+
+
+@app.delete("/api/sessions/{session_id}")
+def delete_session(session_id: str):
+    """删除会话。"""
+    _sessions.pop(session_id, None)
+    _session_meta.pop(session_id, None)
+    return {"ok": True}
 
 
 @app.get("/api/health")

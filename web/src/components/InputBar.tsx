@@ -32,11 +32,12 @@ export default function InputBar({ onSend, onUpload, loading, inputRef }: Props)
   const submit = (quickType?: string) => {
     const hasImages = pendingImages.length > 0;
     if ((!value.trim() && !hasImages && !quickType) || loading) return;
-    let text = value.trim();
+    const desc = value.trim();
+    let text = desc;
     if (quickType && hasImages) {
-      // 快捷出图：直接发指令，后端自动跳过确认
       const typeName = QUICK_TYPES.find(t => t.value === quickType)?.label || quickType;
-      text = `一键出${typeName}`;
+      // 有自定义描述则合并，否则走极简一键出
+      text = desc ? `${desc}，出${typeName}` : `一键出${typeName}`;
     } else if (!text && hasImages) {
       text = "根据这张图出商品主图";
     }
@@ -109,7 +110,7 @@ export default function InputBar({ onSend, onUpload, loading, inputRef }: Props)
                   </button>
                 </div>
               ))}
-              <span className="text-xs text-ivory-400/60">选好类型，一键出图：</span>
+              <span className="text-xs text-ivory-400/60">选类型一键出图，或在下方补充描述后点击类型：</span>
             </div>
             {/* 快捷类型按钮 */}
             <div className="flex gap-2 flex-wrap">
@@ -168,7 +169,7 @@ export default function InputBar({ onSend, onUpload, loading, inputRef }: Props)
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKey}
           disabled={loading}
-          placeholder={loading ? "助手思考中…" : "发张图或说点什么，回车发送"}
+          placeholder={loading ? "助手思考中…" : pendingImages.length > 0 ? "可补充描述（如：拼多多详情页风格），回车或选类型发送" : "发张图或说点什么，回车发送"}
           className="flex-1 bg-transparent outline-none text-sm text-ivory-500 placeholder:text-ivory-400/40 disabled:opacity-50 min-w-0"
         />
         {supported.recognition && (

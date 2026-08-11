@@ -79,7 +79,8 @@ def _merge_params(confirmed_task: ConfirmedTask) -> dict[str, Any]:
     """合并 summary.params + intent.slots → adapter 调用参数 dict。
 
     优先级：summary.params > intent.slots（确认层最终参数覆盖理解层解析值）。
-    输出含 task_type / product / quantity / style / size 等字段。
+    输出含 task_type / product / quantity / style / size / prompt 等字段。
+    prompt 取 intent.raw_text，让用户自定义描述流入 adapter 构建 prompt。
     """
     params: dict[str, Any] = {}
     # 先放 slots（拍平 SlotValue.value 到顶层 key）
@@ -90,6 +91,10 @@ def _merge_params(confirmed_task: ConfirmedTask) -> dict[str, Any]:
     # 兜底加 task_type / product
     params.setdefault("task_type", confirmed_task.intent.task_type)
     params.setdefault("product", confirmed_task.intent.product)
+    # 把用户原始描述传给 adapter 作为 prompt 补充
+    raw = confirmed_task.intent.raw_text.strip()
+    if raw:
+        params.setdefault("prompt", raw)
     return params
 
 

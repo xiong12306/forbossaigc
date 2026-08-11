@@ -163,6 +163,23 @@ CREATE TABLE IF NOT EXISTS canvases (
 );
 CREATE INDEX IF NOT EXISTS idx_canvases_owner ON canvases(owner);
 CREATE INDEX IF NOT EXISTS idx_canvases_updated ON canvases(updated_at DESC);
+
+-- 画布异步生图任务（持久化，支持刷新恢复）
+CREATE TABLE IF NOT EXISTS canvas_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'pending',   -- pending | running | succeeded | failed
+    stage TEXT DEFAULT '',                      -- submitting | queued | generating | downloading | done
+    image_url TEXT DEFAULT '',
+    error TEXT DEFAULT '',
+    error_kind TEXT DEFAULT '',
+    prompt_used TEXT DEFAULT '',
+    model_used TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_canvas_tasks_status ON canvas_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_canvas_tasks_updated ON canvas_tasks(updated_at DESC);
 """
 
 

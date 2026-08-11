@@ -28,9 +28,11 @@ import {
   CheckCheck,
   LayoutTemplate,
 } from "lucide-react";
-import { uploadImage, canvasGenerate, listCanvases, saveCanvas, loadCanvas, deleteCanvas, createNewCanvas, type CanvasInfo } from "@/api";
+import { uploadImage, canvasGenerate, canvasSubmit, canvasStatus, listCanvases, saveCanvas, loadCanvas, deleteCanvas, createNewCanvas, type CanvasInfo } from "@/api";
 
 export type CanvasNodeType = "text" | "image" | "generated" | "sticky" | "generator";
+
+export type GenStage = "" | "submitting" | "queued" | "generating" | "downloading" | "done";
 
 export interface CanvasNode {
   id: string;
@@ -47,6 +49,11 @@ export interface CanvasNode {
   preset?: string;
   generating?: boolean;
   error?: string;
+  errorKind?: string;
+  errorSuggestion?: string;
+  stage?: GenStage;
+  taskId?: string;
+  count?: number;
 }
 
 export interface CanvasConnection {
@@ -110,11 +117,41 @@ const SIZES = [
 ];
 
 const PRESETS = [
-  { id: "main", name: "商品主图" },
-  { id: "detail", name: "详情图" },
-  { id: "scene", name: "场景图" },
-  { id: "poster", name: "营销海报" },
+  { id: "main", name: "商品主图", cat: "基础" },
+  { id: "detail", name: "详情图", cat: "基础" },
+  { id: "scene", name: "场景图", cat: "基础" },
+  { id: "poster", name: "营销海报", cat: "基础" },
+  { id: "white_bg", name: "白底图", cat: "电商" },
+  { id: "model", name: "模特图", cat: "电商" },
+  { id: "contrast", name: "对比图", cat: "电商" },
+  { id: "carousel", name: "轮播图", cat: "电商" },
+  { id: "detail_macro", name: "细节微距", cat: "细节" },
+  { id: "multi_angle", name: "多角度", cat: "细节" },
+  { id: "infographic", name: "信息图", cat: "细节" },
+  { id: "lifestyle", name: "生活方式", cat: "场景" },
 ];
+
+const STAGE_LABELS: Record<string, string> = {
+  submitting: "提交中...",
+  queued: "排队中...",
+  generating: "生成中...",
+  downloading: "下载中...",
+  done: "完成",
+  "": "AI 创作中...",
+};
+
+const COUNT_OPTIONS = [1, 2, 3, 4];
+
+// 预设分组（供下拉菜单分组展示）
+const PRESET_CATEGORIES_LIST = (() => {
+  const cats: Record<string, { id: string; name: string; presets: typeof PRESETS }> = {};
+  for (const p of PRESETS) {
+    const catId = p.cat || "其他";
+    if (!cats[catId]) cats[catId] = { id: catId, name: catId, presets: [] };
+    cats[catId].presets.push(p);
+  }
+  return Object.values(cats);
+})();
 
 const NODE_ICON: Record<CanvasNodeType, typeof Type> = {
   text: Type,
@@ -224,6 +261,12 @@ export default function InfiniteCanvas() {
   const [mentionState, setMentionState] = useState<{ generatorId: string; startPos: number; query: string; pos: { x: number; y: number } } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
 
+  // 画布拾取参考图模式
+  const [pickingForNodeId, setPickingForNodeId] = useState<string | null>(null);
+  // 数量下拉
+  const [countDropdownOpen, setCountDropdownOpen] = useState<string | null>(null);
+  const [countDropdownPos, setCountDropdownPos] = useState<DropdownPosition>({ x: 0, y: 0 });
+
   const canvasRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingImagePosRef = useRef<Point | null>(null);
@@ -231,6 +274,10 @@ export default function InfiniteCanvas() {
   const promptTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
 
   const selectedNode = nodes.find(n => n.id === selectedNodeId) || null;
+
+  // ref 同步 nodes，供回调函数访问最新值
+  const nodesRef = useRef<CanvasNode[]>(nodes);
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
 
   // ========== 画布持久化逻辑 ==========
   const refreshCanvasList = useCallback(async () => {
@@ -294,10 +341,13 @@ export default function InfiniteCanvas() {
         const latest = list[0];
         try {
           const detail = await loadCanvas(latest.canvas_id);
-          setNodes(detail.nodes || []);
+          const loadedNodes: CanvasNode[] = detail.nodes || [];
+          setNodes(loadedNodes);
           setConnections(detail.connections || []);
           setCurrentCanvasId(detail.canvas_id);
           setCanvasName(detail.name);
+          // 恢复未完成任务
+          setTimeout(() => resumePendingTasks(loadedNodes), 200);
         } catch (e) {
           console.error("加载最近画布失败", e);
         }
@@ -305,10 +355,24 @@ export default function InfiniteCanvas() {
     })();
   }, [refreshCanvasList]);
 
+  // 任务恢复：画布加载后检查有 taskId 且 generating 的节点，恢复轮询
+  // pollTaskStatusRef 在后面赋值（pollTaskStatus 定义于下方）
+  const pollTaskStatusRef = useRef<((nodeId: string, taskId: string) => Promise<void>) | null>(null);
+
+  const resumePendingTasks = useCallback((loadedNodes: CanvasNode[]) => {
+    for (const node of loadedNodes) {
+      if (node.generating && node.taskId) {
+        console.info("恢复任务轮询:", node.id, node.taskId);
+        void pollTaskStatusRef.current?.(node.id, node.taskId);
+      }
+    }
+  }, []);
+
   const handleLoadCanvas = useCallback(async (canvasId: string) => {
     try {
       const detail = await loadCanvas(canvasId);
-      setNodes(detail.nodes || []);
+      const loadedNodes: CanvasNode[] = detail.nodes || [];
+      setNodes(loadedNodes);
       setConnections(detail.connections || []);
       setCurrentCanvasId(detail.canvas_id);
       setCanvasName(detail.name);
@@ -316,11 +380,13 @@ export default function InfiniteCanvas() {
       setSelectedNodeId(null);
       closeAllDropdownsRef.current();
       resetViewRef.current();
+      // 恢复未完成任务
+      setTimeout(() => resumePendingTasks(loadedNodes), 100);
     } catch (e) {
       console.error("加载画布失败", e);
       alert(e instanceof Error ? e.message : "加载失败");
     }
-  }, []);
+  }, [resumePendingTasks]);
 
   const handleNewCanvas = useCallback(async () => {
     if (nodes.length > 0 && !confirm("新建画布将清空当前内容，是否保存当前画布？")) {
@@ -500,6 +566,7 @@ export default function InfiniteCanvas() {
     setModelDropdownOpen(null);
     setSizeDropdownOpen(null);
     setPresetDropdownOpen(null);
+    setCountDropdownOpen(null);
   }, []);
   closeAllDropdownsRef.current = closeAllDropdowns;
 
@@ -520,6 +587,7 @@ export default function InfiniteCanvas() {
         node = {
           id: genId("gen"), type, x: pos.x, y: pos.y, width: 340, height: 480,
           content: "", title: "图片生成器", model: "siliconflow", size: "1:1", preset: "main", generating: false,
+          count: 1,
         };
         break;
       default:
@@ -596,6 +664,8 @@ export default function InfiniteCanvas() {
   // 画布鼠标按下：平移模式或选择模式
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
     if (draggingConnection || resizing) return;
+    // 取消画布拾取模式
+    if (pickingForNodeId) setPickingForNodeId(null);
     const target = e.target as HTMLElement;
     if (target === canvasRef.current || target.classList.contains("canvas-bg")) {
       if (toolMode === "pan" || e.button === 1) {
@@ -608,7 +678,7 @@ export default function InfiniteCanvas() {
       closeAllDropdowns();
       setMentionState(null);
     }
-  }, [offset, draggingConnection, resizing, toolMode, closeCreateMenu, closeAllDropdowns]);
+  }, [offset, draggingConnection, resizing, toolMode, pickingForNodeId, closeCreateMenu, closeAllDropdowns]);
 
   // 左键双击空白处 → 弹出创建菜单
   const handleCanvasDoubleClick = useCallback((e: React.MouseEvent) => {
@@ -792,7 +862,7 @@ export default function InfiniteCanvas() {
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === "Escape") { closeAllDropdowns(); setMentionState(null); }
     };
-    if (modelDropdownOpen || sizeDropdownOpen || presetDropdownOpen) {
+    if (modelDropdownOpen || sizeDropdownOpen || presetDropdownOpen || countDropdownOpen) {
       setTimeout(() => window.addEventListener("click", handleClickOutside), 0);
       window.addEventListener("keydown", handleEsc);
     }
@@ -800,7 +870,7 @@ export default function InfiniteCanvas() {
       window.removeEventListener("click", handleClickOutside);
       window.removeEventListener("keydown", handleEsc);
     };
-  }, [modelDropdownOpen, sizeDropdownOpen, presetDropdownOpen, closeAllDropdowns]);
+  }, [modelDropdownOpen, sizeDropdownOpen, presetDropdownOpen, countDropdownOpen, closeAllDropdowns]);
 
   useEffect(() => {
     const handleGlobalMouseUp = () => {
@@ -814,9 +884,64 @@ export default function InfiniteCanvas() {
     return upstreamMap[nodeId] || [];
   }, [upstreamMap]);
 
-  // 执行生成 —— 带详细错误处理
+  // 异步轮询任务状态
+  const pollTaskStatus = useCallback(async (nodeId: string, taskId: string) => {
+    const maxAttempts = 300; // 最多轮询300次（约10分钟）
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        const status = await canvasStatus(taskId);
+        // 更新节点阶段
+        updateNode(nodeId, { stage: status.stage as GenStage });
+
+        if (status.status === "succeeded" && status.image_url) {
+          // 获取当前节点内容生成标题
+          const node = nodesRef.current.find(n => n.id === nodeId);
+          const genTitle = (node?.content || "AI生成").replace(/@\S+/g, "").trim().slice(0, 15) || "AI生成";
+          updateNode(nodeId, {
+            imageUrl: status.image_url,
+            type: "generated",
+            generating: false,
+            stage: "done",
+            title: genTitle,
+            error: undefined,
+            taskId: undefined,
+          });
+          return;
+        }
+        if (status.status === "failed") {
+          updateNode(nodeId, {
+            generating: false,
+            stage: "",
+            error: status.error || "生成失败",
+            errorKind: status.error_kind,
+            errorSuggestion: status.error_suggestion,
+            taskId: undefined,
+          });
+          return;
+        }
+        // 继续轮询
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (err) {
+        console.warn("轮询失败", err);
+        // 轮询失败不立即报错，继续重试
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+    }
+    // 超时
+    updateNode(nodeId, {
+      generating: false,
+      stage: "",
+      error: "轮询超时（10分钟），请重试",
+      errorKind: "timeout",
+      errorSuggestion: "生成超时，可能排队较多，建议稍后重试",
+      taskId: undefined,
+    });
+  }, [updateNode]);
+  pollTaskStatusRef.current = pollTaskStatus;
+
+  // 执行生成 —— 异步提交 + 轮询，支持多图
   const executeGenerator = useCallback(async (nodeId: string) => {
-    const node = nodes.find(n => n.id === nodeId);
+    const node = nodesRef.current.find(n => n.id === nodeId);
     if (!node || node.generating) return;
 
     const refs = upstreamNodesOf(nodeId);
@@ -829,38 +954,70 @@ export default function InfiniteCanvas() {
       .map(n => n.imageUrl!)
       .filter(Boolean);
 
-    // 清理prompt中的@引用标记（@xxx 替换为空，避免传给模型）
     const cleanPrompt = (node.content || "").replace(/@\S+/g, "").replace(/\s+/g, " ").trim();
+    const count = Math.max(1, Math.min(4, node.count || 1));
 
-    updateNode(nodeId, { generating: true, error: undefined });
-    try {
-      const res = await canvasGenerate({
-        prompt: cleanPrompt,
-        reference_texts: referenceTexts,
-        reference_images: referenceImages,
-        model: node.model,
-        size: node.size,
-        preset: node.preset,
-      });
-      if (res.image_url) {
-        // 用prompt前15字作为标题，方便@引用时识别
-        const genTitle = (node.content || "AI生成").replace(/@\S+/g, "").trim().slice(0, 15) || "AI生成";
-        updateNode(nodeId, {
-          imageUrl: res.image_url,
-          type: "generated",
-          generating: false,
-          title: genTitle,
+    // 多图：创建额外的节点（垂直堆叠在原图下方）
+    const targetNodeIds: string[] = [nodeId];
+    if (count > 1) {
+      const baseY = node.y + node.height + 20;
+      const newNodes: CanvasNode[] = [];
+      const newConns: CanvasConnection[] = [];
+      for (let i = 1; i < count; i++) {
+        const newId = genId("gen");
+        newNodes.push({
+          ...node,
+          id: newId,
+          x: node.x,
+          y: baseY + (i - 1) * (node.height + 20),
+          content: node.content,
+          count: 1,
+          generating: true,
+          stage: "submitting",
+          taskId: undefined,
+          imageUrl: undefined,
           error: undefined,
         });
-      } else {
-        updateNode(nodeId, { generating: false, error: "未返回图片" });
+        // 复制上游连线
+        for (const ref of refs) {
+          newConns.push({ id: genId("conn"), from: ref.id, to: newId });
+        }
+        targetNodeIds.push(newId);
       }
-    } catch (err) {
-      console.error("生成失败", err);
-      const errMsg = err instanceof Error ? err.message : "生成失败，请重试";
-      updateNode(nodeId, { generating: false, error: errMsg });
+      if (newNodes.length > 0) {
+        setNodes(prev => [...prev, ...newNodes]);
+        setConnections(prev => [...prev, ...newConns]);
+      }
     }
-  }, [nodes, upstreamNodesOf, updateNode]);
+
+    // 标记所有目标节点为生成中
+    updateNode(nodeId, { generating: true, error: undefined, stage: "submitting", count: 1, errorKind: undefined, errorSuggestion: undefined });
+
+    // 并行提交所有任务
+    for (const targetId of targetNodeIds) {
+      if (targetId !== nodeId) {
+        updateNode(targetId, { generating: true, error: undefined, stage: "submitting" });
+      }
+      // 提交
+      try {
+        const submitRes = await canvasSubmit({
+          prompt: cleanPrompt,
+          reference_texts: referenceTexts,
+          reference_images: referenceImages,
+          model: node.model,
+          size: node.size,
+          preset: node.preset,
+        });
+        updateNode(targetId, { taskId: submitRes.task_id, stage: "queued" });
+        // 启动轮询（不await，并行运行）
+        void pollTaskStatus(targetId, submitRes.task_id);
+      } catch (err) {
+        console.error("提交失败", err);
+        const errMsg = err instanceof Error ? err.message : "提交失败，请重试";
+        updateNode(targetId, { generating: false, stage: "", error: errMsg, errorKind: "unknown", errorSuggestion: "建议重试或切换模型" });
+      }
+    }
+  }, [upstreamNodesOf, updateNode, pollTaskStatus]);
 
   const getNodeColors = (type: CanvasNodeType) => {
     switch (type) {
@@ -912,6 +1069,31 @@ export default function InfiniteCanvas() {
     }
   }, [mentionState, mentionCandidates, mentionIndex, handleSelectMention]);
 
+  // 渲染 prompt 中的 @mention 为高亮 chip
+  const renderPromptWithChips = (text: string) => {
+    if (!text) return null;
+    const parts: React.ReactNode[] = [];
+    const regex = /@\S+/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    let key = 0;
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(<span key={key++} className="text-transparent">{text.slice(lastIndex, match.index)}</span>);
+      }
+      parts.push(
+        <span key={key++} className="inline-flex items-center px-1 mx-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-medium border border-blue-200">
+          {match[0]}
+        </span>
+      );
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < text.length) {
+      parts.push(<span key={key++} className="text-transparent">{text.slice(lastIndex)}</span>);
+    }
+    return parts;
+  };
+
   const renderGeneratorNode = (node: CanvasNode, colors: ReturnType<typeof getNodeColors>) => {
     const currentModel = MODELS.find(m => m.id === node.model) || MODELS[0];
     const currentSize = SIZES.find(s => s.id === node.size) || SIZES[0];
@@ -960,10 +1142,43 @@ export default function InfiniteCanvas() {
               <div className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-violet-500/90 text-[9px] text-white font-semibold tracking-wide backdrop-blur-sm">
                 AI 生成
               </div>
+              {/* fork 重做：在原图下方创建新生成器节点，保留原图 */}
               <button
-                onClick={(e) => { e.stopPropagation(); updateNode(node.id, { imageUrl: undefined, type: "generator", title: "图片生成器", generating: false, error: undefined }); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const forkId = genId("gen");
+                  const forkNode: CanvasNode = {
+                    ...node,
+                    id: forkId,
+                    x: node.x + node.width + 40,
+                    y: node.y,
+                    type: "generator",
+                    imageUrl: undefined,
+                    generating: false,
+                    stage: "",
+                    error: undefined,
+                    errorKind: undefined,
+                    errorSuggestion: undefined,
+                    taskId: undefined,
+                    title: "图片生成器",
+                  };
+                  setNodes(prev => [...prev, forkNode]);
+                  // 复制上游连线
+                  const upstream = upstreamNodesOf(node.id);
+                  const newConns = upstream.map(ref => ({ id: genId("conn"), from: ref.id, to: forkId }));
+                  if (newConns.length > 0) setConnections(prev => [...prev, ...newConns]);
+                  setSelectedNodeId(forkId);
+                }}
                 className="absolute top-1.5 right-1.5 w-7 h-7 rounded-lg bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition no-drag backdrop-blur-sm hover:bg-black/80"
-                title="重新设置"
+                title="以此为基础重新生成（保留原图）"
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+              </button>
+              {/* 也保留清空按钮 */}
+              <button
+                onClick={(e) => { e.stopPropagation(); updateNode(node.id, { imageUrl: undefined, type: "generator", title: "图片生成器", generating: false, error: undefined, stage: "" }); }}
+                className="absolute top-1.5 right-9 w-7 h-7 rounded-lg bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition no-drag backdrop-blur-sm hover:bg-black/80"
+                title="清空重设"
               >
                 <Settings2 className="w-3.5 h-3.5" />
               </button>
@@ -978,7 +1193,23 @@ export default function InfiniteCanvas() {
                       <div className="w-10 h-10 rounded-full border-2 border-blue-200" />
                       <Loader2 className="w-10 h-10 animate-spin absolute inset-0 text-blue-500" />
                     </div>
-                    <span className="text-[11px] font-medium text-blue-600 tracking-wide">AI 创作中...</span>
+                    <span className="text-[11px] font-medium text-blue-600 tracking-wide">
+                      {STAGE_LABELS[node.stage || ""] || "AI 创作中..."}
+                    </span>
+                    {/* 阶段进度条 */}
+                    <div className="w-20 h-1 bg-blue-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-blue-400 to-cyan-400 rounded-full transition-all duration-500"
+                        style={{
+                          width: node.stage === "submitting" ? "15%"
+                            : node.stage === "queued" ? "30%"
+                            : node.stage === "generating" ? "60%"
+                            : node.stage === "downloading" ? "85%"
+                            : node.stage === "done" ? "100%"
+                            : "10%"
+                        }}
+                      />
+                    </div>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center gap-1.5">
@@ -994,18 +1225,26 @@ export default function InfiniteCanvas() {
                 </div>
               </div>
 
-              {/* 错误提示 */}
+              {/* 错误提示 + 建议 */}
               {node.error && (
-                <div className="flex items-start gap-1.5 px-2.5 py-1.5 bg-red-50 border-b border-red-200 no-drag">
-                  <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
-                  <span className="text-[10px] text-red-600 leading-tight">{node.error}</span>
+                <div className="px-2.5 py-1.5 bg-red-50 border-b border-red-200 no-drag">
+                  <div className="flex items-start gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+                    <span className="text-[10px] text-red-600 leading-tight flex-1">{node.error}</span>
+                  </div>
+                  {node.errorSuggestion && (
+                    <div className="flex items-start gap-1 mt-1 pt-1 border-t border-red-200/60">
+                      <Sparkles className="w-3 h-3 text-amber-500 flex-shrink-0 mt-0.5" />
+                      <span className="text-[9px] text-amber-700 leading-tight">{node.errorSuggestion}</span>
+                    </div>
+                  )}
                 </div>
               )}
 
               <div className="flex-1 flex flex-col p-2.5 gap-1.5 overflow-hidden no-drag">
-                {/* 参考素材标签条 */}
-                {hasRefs && (
-                  <div className="bg-blue-50/60 border border-blue-200/60 rounded-lg px-2 py-1.5">
+                {/* 参考素材标签条 + 画布拾取按钮 */}
+                {(hasRefs || !node.generating) && (
+                  <div className={`${hasRefs ? "bg-blue-50/60 border border-blue-200/60" : "border border-dashed border-slate-200"} rounded-lg px-2 py-1.5`}>
                     <div className="flex items-center gap-1 mb-1">
                       <span className="text-[9px] text-blue-600 font-bold tracking-wider">@引用</span>
                       <span className="text-[9px] text-blue-400">
@@ -1013,40 +1252,60 @@ export default function InfiniteCanvas() {
                         {refImages.length > 0 && refTexts.length > 0 && " · "}
                         {refTexts.length > 0 && `${refTexts.length}段文本`}
                       </span>
+                      {/* 从画布拾取参考图按钮 */}
+                      {!node.generating && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPickingForNodeId(pickingForNodeId === node.id ? null : node.id);
+                          }}
+                          className={`ml-auto flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium transition no-drag ${
+                            pickingForNodeId === node.id
+                              ? "bg-cyan-500 text-white"
+                              : "bg-white text-cyan-600 border border-cyan-200 hover:bg-cyan-50"
+                          }`}
+                          title="点击后从画布上的图片节点拾取参考图"
+                        >
+                          <Plus className="w-2.5 h-2.5" />
+                          {pickingForNodeId === node.id ? "点击图片拾取..." : "拾取"}
+                        </button>
+                      )}
                     </div>
-                    <div className="flex flex-wrap gap-1">
-                      {refImages.map((imgNode) => (
-                        <div key={imgNode.id} className="relative group/refimg">
-                          <img src={imgNode.imageUrl} alt="" className="w-8 h-8 rounded object-cover border border-blue-300" />
-                          <button
-                            onClick={(e) => { e.stopPropagation(); removeConnection(imgNode.id, node.id); }}
-                            className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover/refimg:opacity-100 transition"
-                            title="移除引用"
-                          >
-                            <X className="w-2 h-2" />
-                          </button>
-                        </div>
-                      ))}
-                      {refTexts.map((textNode) => (
-                        <div key={textNode.id} className="relative group/reftxt flex items-center gap-1 bg-white border border-blue-200 rounded px-1.5 py-0.5">
-                          <Type className="w-2.5 h-2.5 text-blue-500 flex-shrink-0" />
-                          <span className="text-[9px] text-slate-700 max-w-[80px] truncate">
-                            {textNode.content.slice(0, 15)}{textNode.content.length > 15 ? "..." : ""}
-                          </span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); removeConnection(textNode.id, node.id); }}
-                            className="w-3 h-3 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover/reftxt:opacity-100 transition flex-shrink-0"
-                            title="移除引用"
-                          >
-                            <X className="w-2 h-2" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
+                    {hasRefs && (
+                      <div className="flex flex-wrap gap-1">
+                        {refImages.map((imgNode) => (
+                          <div key={imgNode.id} className="relative group/refimg">
+                            <img src={imgNode.imageUrl} alt="" className="w-8 h-8 rounded object-cover border border-blue-300" />
+                            <button
+                              onClick={(e) => { e.stopPropagation(); removeConnection(imgNode.id, node.id); }}
+                              className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover/refimg:opacity-100 transition"
+                              title="移除引用"
+                            >
+                              <X className="w-2 h-2" />
+                            </button>
+                          </div>
+                        ))}
+                        {refTexts.map((textNode) => (
+                          <div key={textNode.id} className="relative group/reftxt flex items-center gap-1 bg-white border border-blue-200 rounded px-1.5 py-0.5">
+                            <Type className="w-2.5 h-2.5 text-blue-500 flex-shrink-0" />
+                            <span className="text-[9px] text-slate-700 max-w-[80px] truncate">
+                              {textNode.content.slice(0, 15)}{textNode.content.length > 15 ? "..." : ""}
+                            </span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); removeConnection(textNode.id, node.id); }}
+                              className="w-3 h-3 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover/reftxt:opacity-100 transition flex-shrink-0"
+                              title="移除引用"
+                            >
+                              <X className="w-2 h-2" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* 模型 + 尺寸选择 */}
+                {/* 模型 + 尺寸 + 数量选择 */}
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={openModelDropdown}
@@ -1060,6 +1319,22 @@ export default function InfiniteCanvas() {
                     className="flex items-center gap-0.5 px-2.5 py-1.5 text-[11px] bg-white border border-slate-200 rounded-lg hover:border-blue-400 hover:bg-blue-50/30 transition text-slate-700 shadow-sm font-mono"
                   >
                     <span className="font-medium">{currentSize.id}</span>
+                    <ChevronDown className="w-3 h-3 flex-shrink-0 text-slate-400" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const pos = getDropdownPos(e);
+                      setCountDropdownPos(pos);
+                      setModelDropdownOpen(null);
+                      setSizeDropdownOpen(null);
+                      setPresetDropdownOpen(null);
+                      setCountDropdownOpen(countDropdownOpen === node.id ? null : node.id);
+                    }}
+                    className="flex items-center gap-0.5 px-2 py-1.5 text-[11px] bg-white border border-slate-200 rounded-lg hover:border-blue-400 hover:bg-blue-50/30 transition text-slate-700 shadow-sm font-mono"
+                    title="生成数量"
+                  >
+                    <span className="font-medium">×{node.count || 1}</span>
                     <ChevronDown className="w-3 h-3 flex-shrink-0 text-slate-400" />
                   </button>
                 </div>
@@ -1076,18 +1351,33 @@ export default function InfiniteCanvas() {
                   <ChevronDown className="w-3 h-3 flex-shrink-0 text-slate-400" />
                 </button>
 
-                {/* 输入框 */}
-                <textarea
-                  ref={(el) => { promptTextareaRefs.current[node.id] = el; }}
-                  value={node.content}
-                  onChange={(e) => handlePromptChange(node.id, e.target.value, e.target)}
-                  onKeyDown={(e) => handlePromptKeyDown(e, node.id)}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onFocus={() => { if (mentionState && mentionState.generatorId !== node.id) setMentionState(null); }}
-                  placeholder="描述想要生成的图片... 输入 @ 引用素材&#10;例如：把@项链换成粉色背景"
-                  className="flex-1 w-full px-2.5 py-2 text-[11px] bg-white border border-slate-200 rounded-lg resize-none outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20 text-slate-700 placeholder:text-slate-400 leading-relaxed shadow-sm"
-                  style={{ minHeight: hasRefs ? 36 : 50 }}
-                />
+                {/* 输入框（带 @mention chip 高亮 overlay） */}
+                <div className="relative flex-1" style={{ minHeight: hasRefs ? 36 : 50 }}>
+                  {/* 高亮 overlay：渲染 @mention 为彩色背景 */}
+                  <div
+                    className="absolute inset-0 px-2.5 py-2 text-[11px] leading-relaxed pointer-events-none whitespace-pre-wrap break-words overflow-hidden"
+                    style={{ fontFamily: 'inherit', fontSize: '11px' }}
+                  >
+                    {renderPromptWithChips(node.content)}
+                  </div>
+                  <textarea
+                    ref={(el) => { promptTextareaRefs.current[node.id] = el; }}
+                    value={node.content}
+                    onChange={(e) => handlePromptChange(node.id, e.target.value, e.target)}
+                    onKeyDown={(e) => handlePromptKeyDown(e, node.id)}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onScroll={(e) => {
+                      // 同步 overlay 滚动位置
+                      const ta = e.currentTarget;
+                      const overlay = ta.previousElementSibling as HTMLDivElement;
+                      if (overlay) { overlay.scrollTop = ta.scrollTop; overlay.scrollLeft = ta.scrollLeft; }
+                    }}
+                    onFocus={() => { if (mentionState && mentionState.generatorId !== node.id) setMentionState(null); }}
+                    placeholder="描述想要生成的图片... 输入 @ 引用素材&#10;例如：把@项链换成粉色背景"
+                    className="relative w-full h-full px-2.5 py-2 text-[11px] bg-transparent border border-slate-200 rounded-lg resize-none outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20 text-slate-700 placeholder:text-slate-400 leading-relaxed shadow-sm"
+                    style={{ caretColor: 'rgb(51, 65, 85)' }}
+                  />
+                </div>
 
                 {/* 生成按钮 */}
                 <button
@@ -1121,10 +1411,12 @@ export default function InfiniteCanvas() {
         ? "border-cyan-500 shadow-lg shadow-cyan-500/30 ring-2 ring-cyan-400/40"
         : colors.border;
 
+    const isPickable = pickingForNodeId !== null && pickingForNodeId !== node.id && isImageLike && !!node.imageUrl;
+
     return (
       <div
         key={node.id}
-        className={`absolute group select-none rounded-xl border-2 shadow-md shadow-slate-300/40 ${borderClass} ${isHoveredInput ? "bg-cyan-50/40" : ""}`}
+        className={`absolute group select-none rounded-xl border-2 shadow-md shadow-slate-300/40 ${borderClass} ${isHoveredInput ? "bg-cyan-50/40" : ""} ${isPickable ? "ring-2 ring-cyan-400 cursor-pointer" : ""}`}
         style={{
           left: node.x,
           top: node.y,
@@ -1134,7 +1426,23 @@ export default function InfiniteCanvas() {
           transition: isDraggingNode && isSelected ? "none" : "border-color 0.15s, box-shadow 0.15s, background-color 0.15s",
         }}
         onMouseDown={(e) => handleNodeMouseDown(e, node)}
-        onClick={(e) => { e.stopPropagation(); setSelectedNodeId(node.id); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          // 画布拾取模式：点击图片节点添加为参考
+          if (pickingForNodeId && isImageLike && node.imageUrl && pickingForNodeId !== node.id) {
+            const exists = connections.some(c => c.from === node.id && c.to === pickingForNodeId);
+            if (!exists) {
+              setConnections(prev => [...prev, { id: genId("conn"), from: node.id, to: pickingForNodeId }]);
+            }
+            setPickingForNodeId(null);
+            return;
+          }
+          if (pickingForNodeId) {
+            // 点击非图片节点取消拾取
+            setPickingForNodeId(null);
+          }
+          setSelectedNodeId(node.id);
+        }}
         onDoubleClick={(e) => { e.stopPropagation(); if (isTextLike) setEditingNodeId(node.id); }}
       >
         <div className={`flex items-center justify-between px-2.5 ${colors.titleBg} rounded-t-[10px]`} style={{ height: TITLE_HEIGHT }}>
@@ -1300,6 +1608,20 @@ export default function InfiniteCanvas() {
         双击空白处创建节点 · 拖右侧 <span className="text-blue-500">+</span> 连线引用 · 滚轮缩放
       </div>
 
+      {/* 拾取模式指示条 */}
+      {pickingForNodeId && (
+        <div className="absolute top-28 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 bg-cyan-500 text-white text-[11px] font-medium rounded-full px-4 py-1.5 shadow-lg shadow-cyan-500/30">
+          <Plus className="w-3.5 h-3.5 animate-pulse" />
+          <span>点击画布上的图片节点添加为参考图</span>
+          <button
+            onClick={() => setPickingForNodeId(null)}
+            className="ml-1 w-4 h-4 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition"
+          >
+            <X className="w-2.5 h-2.5" />
+          </button>
+        </div>
+      )}
+
       <div
         ref={canvasRef}
         className={`w-full h-full relative overflow-hidden canvas-bg ${toolMode === "pan" ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
@@ -1410,7 +1732,7 @@ export default function InfiniteCanvas() {
             )}
           </AnimatePresence>
 
-          {/* 预设下拉 */}
+          {/* 预设下拉（分组显示） */}
           <AnimatePresence>
             {presetDropdownOpen && (
               <motion.div
@@ -1418,20 +1740,59 @@ export default function InfiniteCanvas() {
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -4, scale: 0.98 }}
                 transition={{ duration: 0.12 }}
-                className="fixed z-50 bg-white border border-slate-200 rounded-xl shadow-xl shadow-slate-400/20 overflow-hidden no-drag"
+                className="fixed z-50 bg-white border border-slate-200 rounded-xl shadow-xl shadow-slate-400/20 overflow-hidden no-drag max-h-[320px] overflow-y-auto"
                 style={{ left: presetDropdownPos.x, top: presetDropdownPos.y, minWidth: 180 }}
                 onClick={(e) => e.stopPropagation()}
               >
-                {PRESETS.map(p => (
+                {PRESET_CATEGORIES_LIST.map(cat => (
+                  <div key={cat.id}>
+                    <div className="px-3 py-1 text-[9px] text-slate-400 uppercase tracking-wider bg-slate-50 border-b border-slate-100 font-bold">
+                      {cat.name}
+                    </div>
+                    {cat.presets.map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => { const node = nodes.find(n => n.id === presetDropdownOpen); if (node) updateNode(node.id, { preset: p.id }); setPresetDropdownOpen(null); }}
+                        className={`w-full text-left px-3 py-2 text-[12px] hover:bg-blue-50 flex items-center justify-between gap-2 transition ${p.id === (nodes.find(n => n.id === presetDropdownOpen)?.preset) ? "bg-blue-50 text-blue-600" : "text-slate-700"}`}
+                      >
+                        <span className="font-medium">{p.name}</span>
+                        {p.id === (nodes.find(n => n.id === presetDropdownOpen)?.preset) && <Check className="w-4 h-4 text-blue-600 flex-shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* 数量下拉 */}
+          <AnimatePresence>
+            {countDropdownOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -4, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -4, scale: 0.98 }}
+                transition={{ duration: 0.12 }}
+                className="fixed z-50 bg-white border border-slate-200 rounded-xl shadow-xl shadow-slate-400/20 overflow-hidden no-drag"
+                style={{ left: countDropdownPos.x, top: countDropdownPos.y, minWidth: 100 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="px-3 py-1 text-[9px] text-slate-400 uppercase tracking-wider bg-slate-50 border-b border-slate-100 font-bold">
+                  生成数量
+                </div>
+                {COUNT_OPTIONS.map(c => (
                   <button
-                    key={p.id}
-                    onClick={() => { const node = nodes.find(n => n.id === presetDropdownOpen); if (node) updateNode(node.id, { preset: p.id }); setPresetDropdownOpen(null); }}
-                    className={`w-full text-left px-3 py-2.5 text-[12px] hover:bg-blue-50 flex items-center justify-between gap-2 transition ${p.id === (nodes.find(n => n.id === presetDropdownOpen)?.preset) ? "bg-blue-50 text-blue-600" : "text-slate-700"}`}
+                    key={c}
+                    onClick={() => { const node = nodes.find(n => n.id === countDropdownOpen); if (node) updateNode(node.id, { count: c }); setCountDropdownOpen(null); }}
+                    className={`w-full text-left px-3 py-2 text-[12px] hover:bg-blue-50 flex items-center justify-between gap-2 transition ${c === (nodes.find(n => n.id === countDropdownOpen)?.count || 1) ? "bg-blue-50 text-blue-600" : "text-slate-700"}`}
                   >
-                    <span className="font-medium">{p.name}</span>
-                    {p.id === (nodes.find(n => n.id === presetDropdownOpen)?.preset) && <Check className="w-4 h-4 text-blue-600 flex-shrink-0" />}
+                    <span className="font-medium font-mono">×{c}</span>
+                    {c === (nodes.find(n => n.id === countDropdownOpen)?.count || 1) && <Check className="w-4 h-4 text-blue-600 flex-shrink-0" />}
                   </button>
                 ))}
+                <div className="px-3 py-1 text-[9px] text-slate-400 border-t border-slate-100">
+                  多图将垂直堆叠为新节点
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

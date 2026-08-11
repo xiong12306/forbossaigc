@@ -1,7 +1,8 @@
 """boss_aigc.api.canvas 无限画布专用API。
 
-直接异步调用 ModelScope / NanoBanana API，不经过七层pipeline，
-避免阻塞 FastAPI 事件循环。按 model 参数分发到对应平台。
+支持异步生图（submit+poll）和同步生图（generate）。
+按 model 参数分发到 ModelScope / SiliconFlow / NanoBanana 平台。
+任务持久化到 SQLite，支持刷新恢复。
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ import base64
 import mimetypes
 import uuid
 import json
+import time
+import threading
 from pathlib import Path
 from typing import Any
 from datetime import datetime
@@ -43,6 +46,48 @@ _PRESET_PROMPTS: dict[str, str] = {
     "detail": "详情图，浅色纯净背景，商品细节微距特写，展示材质纹理、工艺接缝，浅景深虚化背景",
     "scene": "场景图，真实生活场景，商品自然融入使用环境，自然窗光柔和照射",
     "poster": "营销海报，简约大气背景，商品居中突出，精致光影设计感，高端品牌质感",
+    "white_bg": "白底图，纯白背景#FFFFFF，商品正面居中，均匀无影照明，电商上架标准图",
+    "model": "模特图，真人模特手持/穿戴商品，自然姿态，棚拍柔光，肤色真实自然",
+    "contrast": "对比图，左右对比布局，使用前vs使用后，突出效果差异，信息图风格",
+    "lifestyle": "生活方式图，商品融入真实使用场景，生活化构图，温暖自然光",
+    "detail_macro": "细节微距图，极近距离特写，展示材质纹理和做工细节，专业微距摄影",
+    "multi_angle": "多角度图，商品45度/正面/侧面三视角，白色背景，全方位展示",
+    "infographic": "信息图，商品功能标注图，箭头指示关键卖点，简洁扁平设计风格",
+    "carousel": "轮播图，适合电商详情页，商品不同角度切换，统一色调风格",
+}
+
+# 预设分类（供前端分组展示）
+_PRESET_CATEGORIES: list[dict[str, Any]] = [
+    {"id": "basic", "name": "基础", "presets": ["main", "detail", "scene", "poster"]},
+    {"id": "ecommerce", "name": "电商", "presets": ["white_bg", "model", "contrast", "carousel"]},
+    {"id": "detail", "name": "细节", "presets": ["detail_macro", "multi_angle", "infographic"]},
+    {"id": "scene", "name": "场景", "presets": ["scene", "lifestyle"]},
+]
+
+# 错误分类映射：HTTP状态码/关键词 → error_kind
+def _classify_error(status_code: int, detail: str) -> str:
+    """将错误归类为前端可识别的 error_kind。"""
+    detail_lower = detail.lower()
+    if status_code == 429 or "rate" in detail_lower or "limit" in detail_lower:
+        return "rate_limit"
+    if status_code == 504 or "timeout" in detail_lower or "超时" in detail:
+        return "timeout"
+    if status_code == 400 or "不存在" in detail or "invalid" in detail_lower:
+        return "invalid_input"
+    if status_code == 503 or "未配置" in detail or "key" in detail_lower:
+        return "config_error"
+    if status_code in (500, 502):
+        return "platform_error"
+    return "unknown"
+
+# 错误建议文案
+_ERROR_SUGGESTIONS: dict[str, str] = {
+    "rate_limit": "平台限流，建议等待30秒后重试，或切换其他模型",
+    "timeout": "生成超时（5分钟），可能排队较多，建议稍后重试",
+    "invalid_input": "输入参数有误，请检查参考图是否存在、prompt是否为空",
+    "config_error": "平台API Key未配置，请联系管理员",
+    "platform_error": "生图平台异常，建议切换模型重试",
+    "unknown": "未知错误，建议重试或切换模型",
 }
 
 _QUALITY_SUFFIX = (
@@ -72,6 +117,254 @@ class CanvasGenerateResponse(BaseModel):
     image_url: str
     prompt_used: str
     model_used: str
+
+
+# ============ 异步任务系统 ============
+
+class CanvasSubmitRequest(BaseModel):
+    prompt: str = ""
+    reference_images: list[str] = []
+    reference_texts: list[str] = []
+    model: str = "modelscope"
+    size: str = "1:1"
+    preset: str = "main"
+
+
+class CanvasSubmitResponse(BaseModel):
+    task_id: str
+    status: str = "pending"
+
+
+class CanvasTaskStatus(BaseModel):
+    task_id: str
+    status: str  # pending | running | succeeded | failed
+    stage: str = ""  # submitting | queued | generating | downloading | done
+    image_url: str = ""
+    error: str = ""
+    error_kind: str = ""
+    error_suggestion: str = ""
+    prompt_used: str = ""
+    model_used: str = ""
+    created_at: float = 0.0
+
+
+# 内存任务存储（带锁）
+_canvas_tasks: dict[str, dict] = {}
+_tasks_lock = threading.Lock()
+_TASK_TTL = 3600  # 任务记录保留1小时
+
+
+def _set_task(task_id: str, **fields) -> None:
+    with _tasks_lock:
+        task = _canvas_tasks.get(task_id)
+        if task is None:
+            task = {"task_id": task_id, "created_at": time.time(), "status": "pending", "stage": ""}
+        task.update(fields)
+        _canvas_tasks[task_id] = task
+        # 同时持久化到DB
+        _persist_task(task)
+
+
+def _get_task(task_id: str) -> dict | None:
+    with _tasks_lock:
+        task = _canvas_tasks.get(task_id)
+        if task:
+            return dict(task)
+    # 尝试从DB加载
+    return _load_task_from_db(task_id)
+
+
+def _cleanup_old_tasks() -> None:
+    """清理超过TTL的已完成任务。"""
+    now = time.time()
+    with _tasks_lock:
+        expired = [tid for tid, t in _canvas_tasks.items()
+                   if now - t.get("created_at", 0) > _TASK_TTL and t.get("status") in ("succeeded", "failed")]
+        for tid in expired:
+            del _canvas_tasks[tid]
+
+
+def _persist_task(task: dict) -> None:
+    """持久化任务到SQLite。"""
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO canvas_tasks "
+                "(task_id, status, stage, image_url, error, error_kind, prompt_used, model_used, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    task["task_id"],
+                    task.get("status", "pending"),
+                    task.get("stage", ""),
+                    task.get("image_url", ""),
+                    task.get("error", ""),
+                    task.get("error_kind", ""),
+                    task.get("prompt_used", ""),
+                    task.get("model_used", ""),
+                    datetime.fromtimestamp(task.get("created_at", time.time())).isoformat(),
+                    datetime.now().isoformat(),
+                )
+            )
+    except Exception as e:
+        logger.warning("持久化任务失败: %s", e)
+
+
+def _load_task_from_db(task_id: str) -> dict | None:
+    """从SQLite加载任务。"""
+    try:
+        with get_conn() as conn:
+            r = conn.execute(
+                "SELECT * FROM canvas_tasks WHERE task_id = ?", (task_id,)
+            ).fetchone()
+        if not r:
+            return None
+        created_at = time.time()
+        try:
+            created_at = datetime.fromisoformat(r["created_at"]).timestamp()
+        except Exception:
+            pass
+        return {
+            "task_id": r["task_id"],
+            "status": r["status"],
+            "stage": r["stage"] or "",
+            "image_url": r["image_url"] or "",
+            "error": r["error"] or "",
+            "error_kind": r["error_kind"] or "",
+            "prompt_used": r["prompt_used"] or "",
+            "model_used": r["model_used"] or "",
+            "created_at": created_at,
+        }
+    except Exception as e:
+        logger.warning("加载任务失败: %s", e)
+        return None
+
+
+async def _run_generation_task(task_id: str, req: CanvasSubmitRequest) -> None:
+    """后台执行生图任务，更新任务状态。"""
+    _set_task(task_id, status="running", stage="submitting")
+    try:
+        final_prompt = _build_final_prompt(req)
+        ref_data_uris = _resolve_ref_images(req)
+
+        model = (req.model or "").lower()
+        settings = get_settings()
+        if not model:
+            if settings.platform_provider == "siliconflow" and settings.siliconflow_api_key:
+                model = "siliconflow"
+            elif settings.platform_provider == "nanobanana" and settings.nanobanana_api_key:
+                model = "nanobanana"
+            else:
+                model = "modelscope"
+
+        _set_task(task_id, stage="queued", prompt_used=final_prompt)
+
+        result: CanvasGenerateResponse | None = None
+
+        if model == "nanobanana":
+            _set_task(task_id, stage="generating")
+            result = await _generate_via_nanobanana(req, final_prompt, ref_data_uris)
+        elif model == "siliconflow":
+            _set_task(task_id, stage="generating")
+            result = await _generate_via_siliconflow(req, final_prompt, ref_data_uris)
+        else:
+            _set_task(task_id, stage="generating")
+            try:
+                result = await _generate_via_modelscope(req, final_prompt, ref_data_uris)
+            except HTTPException as e:
+                if e.status_code in (429, 502, 503, 504):
+                    if settings.siliconflow_api_key:
+                        logger.warning("ModelScope 不可用（%d），降级到 SiliconFlow", e.status_code)
+                        _set_task(task_id, stage="generating")
+                        try:
+                            result = await _generate_via_siliconflow(req, final_prompt, ref_data_uris)
+                        except HTTPException:
+                            pass
+                    if result is None and settings.nanobanana_api_key:
+                        logger.warning("降级到 NanoBanana")
+                        _set_task(task_id, stage="generating")
+                        result = await _generate_via_nanobanana(req, final_prompt, ref_data_uris)
+                if result is None:
+                    raise
+
+        if result and result.image_url:
+            _set_task(
+                task_id,
+                status="succeeded",
+                stage="done",
+                image_url=result.image_url,
+                model_used=result.model_used,
+            )
+        else:
+            _set_task(
+                task_id,
+                status="failed",
+                stage="",
+                error="未返回图片",
+                error_kind="platform_error",
+                error_suggestion=_ERROR_SUGGESTIONS["platform_error"],
+            )
+    except HTTPException as e:
+        err_kind = _classify_error(e.status_code, str(e.detail))
+        _set_task(
+            task_id,
+            status="failed",
+            stage="",
+            error=str(e.detail),
+            error_kind=err_kind,
+            error_suggestion=_ERROR_SUGGESTIONS.get(err_kind, _ERROR_SUGGESTIONS["unknown"]),
+        )
+    except Exception as e:
+        err_kind = _classify_error(500, str(e))
+        _set_task(
+            task_id,
+            status="failed",
+            stage="",
+            error=str(e)[:200],
+            error_kind=err_kind,
+            error_suggestion=_ERROR_SUGGESTIONS.get(err_kind, _ERROR_SUGGESTIONS["unknown"]),
+        )
+    finally:
+        _cleanup_old_tasks()
+
+
+@router.post("/submit", response_model=CanvasSubmitResponse)
+async def canvas_submit(req: CanvasSubmitRequest) -> CanvasSubmitResponse:
+    """异步提交生图任务，立即返回 task_id。"""
+    _cleanup_old_tasks()
+    task_id = f"task-{uuid.uuid4().hex[:16]}"
+    _set_task(task_id, status="pending", stage="submitting", prompt_used=req.prompt)
+    # 启动后台任务
+    asyncio.create_task(_run_generation_task(task_id, req))
+    return CanvasSubmitResponse(task_id=task_id, status="pending")
+
+
+@router.get("/status/{task_id}", response_model=CanvasTaskStatus)
+async def canvas_status(task_id: str) -> CanvasTaskStatus:
+    """查询任务状态。"""
+    task = _get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+    return CanvasTaskStatus(
+        task_id=task["task_id"],
+        status=task.get("status", "pending"),
+        stage=task.get("stage", ""),
+        image_url=task.get("image_url", ""),
+        error=task.get("error", ""),
+        error_kind=task.get("error_kind", ""),
+        error_suggestion=task.get("error_suggestion", ""),
+        prompt_used=task.get("prompt_used", ""),
+        model_used=task.get("model_used", ""),
+        created_at=task.get("created_at", 0.0),
+    )
+
+
+@router.get("/presets")
+async def get_presets() -> dict:
+    """获取预设列表和分类。"""
+    return {
+        "presets": {k: v for k, v in _PRESET_PROMPTS.items()},
+        "categories": _PRESET_CATEGORIES,
+    }
 
 
 def _resolve_local_image(url_path: str) -> str:
@@ -425,13 +718,14 @@ def _siliconflow_generate_sync(
     model: str,
     prompt: str,
     image_size: str,
-    ref_data_uri: str | None,
+    ref_data_uris: list[str],
     timeout: float,
 ) -> str:
     """同步调用 SiliconFlow API，返回远程图片 URL。
 
     SiliconFlow 是同步 API：POST /images/generations 返回 images[0].url。
-    文生图不传 image；图生图传 image 字段为 base64 data URI（FLUX.1-Kontext-dev/Qwen-Image-Edit）。
+    文生图不传 image；图生图传 image 字段为 base64 data URI。
+    多参考图时传数组（部分模型支持），单图传字符串保持兼容。
     生成的 URL 有效期仅 1 小时，必须立即下载转存。
     """
     url = f"{api_base.rstrip('/')}/images/generations"
@@ -444,8 +738,11 @@ def _siliconflow_generate_sync(
         "prompt": prompt,
         "image_size": image_size,
     }
-    if ref_data_uri:
-        body["image"] = ref_data_uri
+    if len(ref_data_uris) == 1:
+        body["image"] = ref_data_uris[0]
+    elif len(ref_data_uris) > 1:
+        # 多参考图：传数组（Qwen-Image-Edit 等模型支持多图输入）
+        body["image"] = ref_data_uris
 
     with httpx.Client(trust_env=False, http2=False) as client:
         resp = client.post(url, json=body, headers=headers, timeout=timeout)
@@ -476,14 +773,13 @@ async def _generate_via_siliconflow(req: CanvasGenerateRequest, final_prompt: st
     api_base = settings.siliconflow_api_base
     api_key = settings.siliconflow_api_key
     timeout = httpx.Timeout(connect=15.0, read=120.0, write=60.0, pool=15.0)
-    ref_uri = ref_data_uris[0] if ref_data_uris else None
 
     last_err: Exception | None = None
     for attempt in range(3):
         try:
             remote_url = await asyncio.to_thread(
                 _siliconflow_generate_sync,
-                api_key, api_base, model_name, final_prompt, sf_size, ref_uri, timeout,
+                api_key, api_base, model_name, final_prompt, sf_size, ref_data_uris, timeout,
             )
             async with httpx.AsyncClient(trust_env=False, http2=False) as client:
                 try:
