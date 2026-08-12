@@ -43,7 +43,7 @@ def run_step_with_retry(
     params: dict[str, Any],
     retry_max: int = 1,
     max_polls: int = _MAX_POLLS,
-) -> tuple[TaskStatus, list[Artifact]]:
+) -> tuple[TaskStatus, list[Artifact], Optional[str]]:
     """单步执行 + 失败重试。
 
     策略：
@@ -65,50 +65,56 @@ def run_step_with_retry(
         max_polls: poll 循环最大次数（防 timeout 模式死循环）。
 
     Returns:
-        (TaskStatus, list[Artifact])：成功时 artifacts 非空；失败时 artifacts 为空列表。
+        (TaskStatus, list[Artifact], Optional[str])：成功时 artifacts 非空、error=None；失败时 artifacts 为空、error 为原因。
     """
     from boss_aigc.contracts.enums import PlatformKind
 
     is_mock = getattr(adapter, 'kind', None) == PlatformKind.MOCK
     effective_retry_max = retry_max if is_mock else 1
 
-    for attempt in range(effective_retry_max + 1):
-        task_id = adapter.submit(params)
-        polls = 0
+    try:
+        for attempt in range(effective_retry_max + 1):
+            task_id = adapter.submit(params)
+            polls = 0
 
-        while polls < max_polls:
-            polls += 1
-            status, artifacts = adapter.poll(task_id)
+            while polls < max_polls:
+                polls += 1
+                status, artifacts = adapter.poll(task_id)
 
-            if status == TaskStatus.DELIVERED:
-                return status, list(artifacts or [])
+                if status == TaskStatus.DELIVERED:
+                    return status, list(artifacts or []), None
 
-            if status == TaskStatus.EXECUTING:
-                import time
-                from boss_aigc.config import get_settings
-                # 自适应轮询：ModelScope submit 内部已同步等待结果，
-                # 此处 poll 通常立即返回 DELIVERED，用短间隔即可
-                time.sleep(min(get_settings().poll_interval_sec, 1.0))
-                continue
+                if status == TaskStatus.EXECUTING:
+                    import time
+                    from boss_aigc.config import get_settings
+                    time.sleep(min(get_settings().poll_interval_sec, 1.0))
+                    continue
 
-            if status == TaskStatus.FAILED:
-                if attempt < effective_retry_max and is_mock:
-                    logger.info("step 第%d次尝试失败，准备重试", attempt + 1)
-                    break
-                logger.warning(
-                    "step 执行失败（尝试 %d/%d）",
-                    attempt + 1, effective_retry_max + 1,
-                )
-                return status, []
+                if status == TaskStatus.FAILED:
+                    if attempt < effective_retry_max and is_mock:
+                        logger.info("step 第%d次尝试失败，准备重试", attempt + 1)
+                        break
+                    logger.warning(
+                        "step 执行失败（尝试 %d/%d）",
+                        attempt + 1, effective_retry_max + 1,
+                    )
+                    err_msg = None
+                    state = getattr(adapter, '_tasks', {}).get(task_id)
+                    if state is not None:
+                        err_msg = getattr(state, 'error_message', None)
+                    return status, [], err_msg or "执行失败，请稍后重试"
 
-            logger.warning("step 进入非预期状态 %s，判定失败", status.value)
-            return TaskStatus.FAILED, []
+                logger.warning("step 进入非预期状态 %s，判定失败", status.value)
+                return TaskStatus.FAILED, [], f"未知状态: {status.value}"
 
-        if polls >= max_polls:
-            logger.warning("poll 次数达上限 %d，判定失败", max_polls)
-            return TaskStatus.FAILED, []
+            if polls >= max_polls:
+                logger.warning("poll 次数达上限 %d，判定失败", max_polls)
+                return TaskStatus.FAILED, [], "轮询超时"
+    except Exception as e:
+        logger.error("step 执行异常: %s", e, exc_info=True)
+        return TaskStatus.FAILED, [], str(e)
 
-    return TaskStatus.FAILED, []
+    return TaskStatus.FAILED, [], "重试耗尽"
 
 
 def _resolve_step_params(
@@ -174,10 +180,12 @@ def run_execution(
             task_id=execution.task_id,
             artifacts=[],
             status=TaskStatus.FAILED,
+            error_message="无执行步骤",
         )
 
     all_artifacts: list[Artifact] = []
     completed = 0
+    last_error: Optional[str] = None
 
     for step in execution.steps:
         # 1. 组装 params
@@ -192,11 +200,11 @@ def run_execution(
                 step.platform.value, step.step_id,
             )
             _mark_execution_failed(execution, completed, total_steps)
-            return _build_failed_result(execution)
+            return _build_failed_result(execution, f"找不到适配器: {step.platform.value}")
 
         # 3. 执行 + 重试
         step.status = TaskStatus.EXECUTING
-        status, artifacts = run_step_with_retry(adapter, params, retry_max)
+        status, artifacts, err_msg = run_step_with_retry(adapter, params, retry_max)
 
         # 4. 失败：尝试降级到 fallback_adapter
         if status != TaskStatus.DELIVERED and fallback_adapter is not None:
@@ -204,15 +212,16 @@ def run_execution(
                 "step %s 主适配器失败，降级到备用适配器", step.step_id,
             )
             _record_fallback(execution, step.step_id)
-            status, artifacts = run_step_with_retry(
+            status, artifacts, err_msg = run_step_with_retry(
                 fallback_adapter, params, retry_max
             )
 
         # 5. 仍失败：整个任务失败
         if status != TaskStatus.DELIVERED:
             step.status = TaskStatus.FAILED
+            last_error = err_msg
             _mark_execution_failed(execution, completed, total_steps)
-            return _build_failed_result(execution)
+            return _build_failed_result(execution, last_error)
 
         # 6. 成功：收集产出，更新 step 状态
         step.status = TaskStatus.DELIVERED
@@ -244,13 +253,14 @@ def _mark_execution_failed(execution: TaskExecution, completed: int, total: int)
     execution.progress = int(completed / total * 100) if total > 0 else 0
 
 
-def _build_failed_result(execution: TaskExecution) -> TaskResult:
+def _build_failed_result(execution: TaskExecution, error_message: Optional[str] = None) -> TaskResult:
     """构造失败结果。"""
     return TaskResult(
         result_id=f"res-{uuid.uuid4().hex[:12]}",
         task_id=execution.task_id,
         artifacts=[],
         status=TaskStatus.FAILED,
+        error_message=error_message,
     )
 
 

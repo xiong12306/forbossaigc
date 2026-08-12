@@ -207,8 +207,8 @@ class Pipeline:
         upstream = self._run_layer(LAYER_ACCESS, upstream, context)
 
         # ---------- Step 2: 根据入口状态决定后续层链 ----------
-        # ACCEPTED是终态：验收归档完成，收到新输入自动重置上下文开始新任务
-        if prev_status == TaskStatus.ACCEPTED:
+        # ACCEPTED/FAILED 是终态：验收完成或执行失败，收到新输入自动重置上下文开始新任务
+        if prev_status in (TaskStatus.ACCEPTED, TaskStatus.FAILED, TaskStatus.CANCELLED):
             # 清空旧任务状态，回到初始PENDING状态，按新任务处理
             context.intent = None
             context.pending_summary = None
@@ -216,7 +216,10 @@ class Pipeline:
             context.execution = None
             context.result = None
             context.status = TaskStatus.PENDING
-            context.extras.clear()
+            # 保留 extras 中的会话级配置（如 style_prompt、风格库引用），不全部 clear
+            _keep_keys = {"uploaded_images", "style_prompt"}
+            new_extras = {k: v for k, v in context.extras.items() if k in _keep_keys}
+            context.extras = new_extras
             prev_status = TaskStatus.PENDING
 
         if prev_status == TaskStatus.AWAITING_CONFIRMATION:
@@ -348,7 +351,7 @@ class Pipeline:
         if status == TaskStatus.ACCEPTED:
             return "已完成"
         if status == TaskStatus.FAILED:
-            return "执行失败"
+            return speak_text or "执行失败，请稍后重试"
         return ""
 
 

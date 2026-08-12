@@ -126,6 +126,7 @@ class TaskResult(BaseModel):
         artifacts: 产出物列表。
         status: 最终状态（DELIVERED / FAILED）。
         completed_at: 完成时间。
+        error_message: 失败原因（仅 FAILED 时有值）。
     """
 
     result_id: str = Field(..., description="结果唯一 ID")
@@ -138,4 +139,7 @@ class TaskResult(BaseModel):
     )
     completed_at: datetime = Field(
         default_factory=datetime.now, description="完成时间"
+    )
+    error_message: Optional[str] = Field(
+        default=None, description="失败原因（仅 FAILED 时有值）"
     )

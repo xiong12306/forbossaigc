@@ -79,7 +79,20 @@ def _branch_a_deliver(
 ) -> Any:
     """分支 A：打包结果 + 默认 dialog 通道推送。
     快速通道（auto_accept=True）：交付后自动验收归档，无需老板手动点确认。
-    正常流程：保持 status=DELIVERED 等老板验收。"""
+    正常流程：保持 status=DELIVERED 等老板验收。
+    失败流程：status=FAILED，错误消息透传给用户，不进入验收。"""
+    # 0. 失败路径：直接透传错误，不打包不推送
+    if task_result.status == TaskStatus.FAILED:
+        err_msg = task_result.error_message or "生成失败，请稍后重试"
+        logger.warning(
+            "分支 A 执行失败: result_id=%s, error=%s",
+            task_result.result_id, err_msg,
+        )
+        context.status = TaskStatus.FAILED
+        context.extras[EXTRA_SPEAK_TEXT_DL] = err_msg
+        # 失败直接返回错误文本字符串（走分支B的返回类型约定，方便server层取message）
+        return err_msg
+
     # 1. 打包
     package = package_result(task_result)
     # 2. 推送（默认 dialog 通道，把 summary_text 写入 context.extras['speak_text']）

@@ -108,7 +108,7 @@ class CanvasGenerateRequest(BaseModel):
     prompt: str = ""
     reference_images: list[str] = []
     reference_texts: list[str] = []
-    model: str = "modelscope"  # modelscope | siliconflow | nanobanana
+    model: str = ""  # 空字符串表示根据配置自动选择；可选 modelscope | siliconflow | nanobanana
     size: str = "1:1"
     preset: str = "main"
 
@@ -125,7 +125,7 @@ class CanvasSubmitRequest(BaseModel):
     prompt: str = ""
     reference_images: list[str] = []
     reference_texts: list[str] = []
-    model: str = "modelscope"
+    model: str = ""  # 空字符串表示根据配置自动选择
     size: str = "1:1"
     preset: str = "main"
 
